@@ -23,6 +23,27 @@ interface WaveConfig {
   hasAurora: boolean;
 }
 
+const KEEPER_LOG = [
+  'The seas were calm tonight. A good start for any keeper.',
+  'Fog rolls in thicker with each passing wave...',
+  'A cargo captain saluted as he passed. Small mercies.',
+  'The rocks claim what the light cannot reach.',
+  'Strange lights dance in the northern sky tonight.',
+  'My grandfather kept this lighthouse. His father before him.',
+  'The emergency horn cuts through the fog like a knife.',
+  'Some nights the ocean seems alive, breathing beneath the beam.',
+  "Haven't seen a treasure barge in years. Fortune smiles.",
+  'The storm grows worse. How many more can I save?',
+  'Dawn breaks, but the ships keep coming.',
+  'The beam grows weaker. I pray the energy holds.',
+  'The currents shift without warning. Stay sharp.',
+  'A sailor once told me the sea forgives nothing.',
+  'The fog whispers. The rocks wait. I keep the light burning.',
+  'Tonight the aurora paints the sky. Even the sea pauses to watch.',
+  'Each ship saved is a crew returned home. That is enough.',
+  'The old foghorn sounds lonelier each night.',
+];
+
 export class GameSystem extends createSystem({}) {
   private state: GameState = 'menu';
   private wave = 0;
@@ -47,6 +68,11 @@ export class GameSystem extends createSystem({}) {
   private treasureChance = 0;
   private emergencySpawned = false;
   private treasureSpawned = false;
+
+  // Tidal wave events
+  private tidalTimer = -1;
+  private tidalActive = false;
+  private tidalDuration = 0;
 
   // Fog sonar mechanic
   private sonarCooldown = 0;
@@ -190,6 +216,25 @@ export class GameSystem extends createSystem({}) {
     this.waveStartTimer = 2.0;
   }
 
+  private triggerTidalWave() {
+    if (Math.random() > 0.7) {
+      this.tidalTimer = 15 + Math.random() * 20;
+      return; // didn't trigger
+    }
+    this.tidalActive = true;
+    this.tidalDuration = 3.0;
+    const angle = Math.random() * Math.PI * 2;
+    this.shipSystem.setTidalForce(Math.cos(angle) * 4, Math.sin(angle) * 4);
+    this.audioSystem.playTidalWave();
+    this.envSystem.triggerTidalSurge();
+    this.hudPanel?.getElementById('wave-start-info')?.setProperties({
+      text: '\ud83c\udf0a TIDAL WAVE \u2014 Ships pushed off course!',
+    });
+    this.showingWaveStart = true;
+    this.waveStartTimer = 3.0;
+    this.tidalTimer = 20 + Math.random() * 25;
+  }
+
   private tryUpgrade(type: 'range' | 'width' | 'energy') {
     const cost = 300;
     if (this.score < cost) return;
@@ -295,6 +340,10 @@ export class GameSystem extends createSystem({}) {
       this.audioSystem.playStormWind();
       this.lightningTimer = 3 + Math.random() * 5;
     }
+
+    // Tidal wave events for later waves
+    this.tidalActive = false;
+    this.tidalTimer = this.wave >= 4 ? 12 + Math.random() * 20 : -1;
 
     this.lighthouseSystem.resetEnergy();
     this.lighthouseSystem.setBeamActive(true);
@@ -489,6 +538,8 @@ export class GameSystem extends createSystem({}) {
     this.envSystem.setWindStrength(0);
     this.envSystem.setCurrentStrength(0);
     this.envSystem.setAuroraActive(false);
+    this.tidalActive = false;
+    this.shipSystem.setTidalForce(0, 0);
     // Transition to dawn between waves
     this.envSystem.setDayPhase(0.3);
     this.audioSystem.setDroneTone(0);
@@ -509,6 +560,10 @@ export class GameSystem extends createSystem({}) {
     this.waveCompletePanel?.getElementById('bonus')?.setProperties({ text: `+${perfectBonus}` });
     this.waveCompletePanel?.getElementById('stars')?.setProperties({ text: starStr });
 
+    // Keeper's log entry
+    const logEntry = KEEPER_LOG[(this.wave - 1) % KEEPER_LOG.length];
+    this.waveCompletePanel?.getElementById('keeper-log')?.setProperties({ text: `"${logEntry}"` });
+
     this.updateUpgradePanel();
     this.showState('wave-complete');
   }
@@ -519,6 +574,8 @@ export class GameSystem extends createSystem({}) {
     this.envSystem.setWindStrength(0);
     this.envSystem.setCurrentStrength(0);
     this.envSystem.setAuroraActive(false);
+    this.tidalActive = false;
+    this.shipSystem.setTidalForce(0, 0);
     this.audioSystem.setDroneTone(0);
 
     let isNewHigh = false;
@@ -612,6 +669,21 @@ export class GameSystem extends createSystem({}) {
           });
           this.showingWaveStart = true;
           this.waveStartTimer = 3.0;
+        }
+      }
+
+      // Tidal wave events (wave 4+)
+      if (this.tidalTimer > 0) {
+        this.tidalTimer -= delta;
+        if (this.tidalTimer <= 0) {
+          this.triggerTidalWave();
+        }
+      }
+      if (this.tidalActive) {
+        this.tidalDuration -= delta;
+        if (this.tidalDuration <= 0) {
+          this.tidalActive = false;
+          this.shipSystem.setTidalForce(0, 0);
         }
       }
 

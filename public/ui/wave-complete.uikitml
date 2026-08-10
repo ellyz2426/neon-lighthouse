@@ -46,6 +46,28 @@
     font-size: 22;
     color: #ffb432;
   }
+  .log-section {
+    flex-direction: column;
+    align-items: center;
+    gap: 4;
+    width: 280;
+    padding: 8;
+    background-color: rgba(255, 200, 100, 0.06);
+    border-radius: 8;
+    border-color: rgba(255, 200, 100, 0.15);
+    border-width: 1;
+    margin-top: 4;
+  }
+  .log-heading {
+    font-size: 11;
+    color: rgba(255, 200, 100, 0.6);
+    font-weight: bold;
+  }
+  .log-entry {
+    font-size: 10;
+    color: rgba(255, 220, 150, 0.8);
+    text-align: center;
+  }
   .upgrade-section {
     flex-direction: column;
     align-items: center;
@@ -137,6 +159,10 @@
     <div class="bonus-val" id="bonus">+0</div>
   </div>
   <div class="stars" id="stars">- - -</div>
+  <div class="log-section">
+    <div class="log-heading">KEEPER'S LOG</div>
+    <div class="log-entry" id="keeper-log">"The light burns on."</div>
+  </div>
   <div class="upgrade-section">
     <div class="upgrade-heading">LIGHTHOUSE UPGRADES</div>
     <div class="upgrade-score-row">

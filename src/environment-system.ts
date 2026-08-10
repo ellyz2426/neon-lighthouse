@@ -133,6 +133,9 @@ export class EnvironmentSystem extends createSystem({}) {
   // Rock moss meshes (for animated glow)
   private rockMossGlows: Mesh[] = [];
 
+  // Tidal surge
+  private tidalSurgeTimer = 0;
+
   init() {
     this.buildOcean();
     this.buildLighthouse();
@@ -844,6 +847,11 @@ export class EnvironmentSystem extends createSystem({}) {
     return this.currentStrength;
   }
 
+  // Tidal surge
+  triggerTidalSurge() {
+    this.tidalSurgeTimer = 3.0;
+  }
+
   // Sonar
   triggerSonar() {
     this.sonarActive = true;
@@ -905,7 +913,13 @@ export class EnvironmentSystem extends createSystem({}) {
 
     // Wind strength interpolation
     this.windStrength += (this.targetWindStrength - this.windStrength) * delta * 2;
-    mat.uniforms.uWindStrength.value = this.windStrength;
+    let effectiveWind = this.windStrength;
+    // Tidal surge amplifies waves temporarily
+    if (this.tidalSurgeTimer > 0) {
+      this.tidalSurgeTimer -= delta;
+      effectiveWind += 1.5 * (this.tidalSurgeTimer / 3.0);
+    }
+    mat.uniforms.uWindStrength.value = effectiveWind;
 
     // Day/night cycle interpolation
     this.dayPhase += (this.targetDayPhase - this.dayPhase) * delta * 0.8;

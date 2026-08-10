@@ -315,7 +315,12 @@ export class LighthouseSystem extends createSystem({}) {
       mat.color.setHex(0xff4422);
       mat.opacity = Math.abs(Math.sin(time * 8)) * 0.03;
     } else {
-      mat.color.setHex(0xffcc44);
+      // Beam color temperature: warm yellow → cold white as energy drops
+      const ct = 1 - this.beamEnergy / this.maxEnergy;
+      const cr = 1.0 - ct * 0.2, cg = 0.8 + ct * 0.07, cb = 0.27 + ct * 0.73;
+      mat.color.setRGB(cr, cg, cb);
+      this.spotLight.color.setRGB(cr, cg, cb);
+      this.beamTipGlow.color.setRGB(cr, cg, cb);
     }
   }
 }

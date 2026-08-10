@@ -496,6 +496,48 @@ export class AudioSystem extends createSystem({}) {
     osc2.stop(now + 2.2);
   }
 
+  playTidalWave() {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    // Deep rumbling sub-bass
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(30, now);
+    osc.frequency.linearRampToValueAtTime(50, now + 1);
+    osc.frequency.linearRampToValueAtTime(25, now + 3);
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.2, now + 0.5);
+    gain.gain.setValueAtTime(0.2, now + 2);
+    gain.gain.linearRampToValueAtTime(0, now + 3.5);
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 3.5);
+    // Wave surge noise
+    const bufferSize = Math.floor(this.ctx.sampleRate * 3);
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.sin((i / bufferSize) * Math.PI) * 0.3;
+    }
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = buffer;
+    const nGain = this.ctx.createGain();
+    nGain.gain.setValueAtTime(0, now);
+    nGain.gain.linearRampToValueAtTime(0.08, now + 0.5);
+    nGain.gain.setValueAtTime(0.08, now + 2);
+    nGain.gain.linearRampToValueAtTime(0, now + 3.5);
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 400;
+    noise.connect(filter);
+    filter.connect(nGain);
+    nGain.connect(this.masterGain);
+    noise.start(now);
+    noise.stop(now + 3.5);
+  }
+
   // New: sonar ping for fog mechanic
   playSonarPing() {
     if (!this.ctx) return;

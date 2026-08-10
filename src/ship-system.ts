@@ -77,6 +77,32 @@ const SHIP_CONFIGS = [
   { name: 'treasure', hullColor: 0xaa8822, cabinColor: 0xffcc44, scale: 1.2, speedMod: 0.5, points: 500, hullW: 1.6, hullH: 0.6, hullD: 3.5 },
 ];
 
+// SOS morse code pattern: returns true when light should be ON
+function sosLightOn(t: number): boolean {
+  const phase = ((t % 4.2) + 4.2) % 4.2;
+  // S: ... (3 dots)
+  if (phase < 0.15) return true;
+  if (phase < 0.25) return false;
+  if (phase < 0.40) return true;
+  if (phase < 0.50) return false;
+  if (phase < 0.65) return true;
+  if (phase < 0.95) return false;
+  // O: --- (3 dashes)
+  if (phase < 1.35) return true;
+  if (phase < 1.45) return false;
+  if (phase < 1.85) return true;
+  if (phase < 1.95) return false;
+  if (phase < 2.35) return true;
+  if (phase < 2.65) return false;
+  // S: ... (3 dots)
+  if (phase < 2.80) return true;
+  if (phase < 2.90) return false;
+  if (phase < 3.05) return true;
+  if (phase < 3.15) return false;
+  if (phase < 3.30) return true;
+  return false; // word gap
+}
+
 export class ShipSystem extends createSystem({}) {
   private ships: ShipData[] = [];
   private lighthouseSystem!: LighthouseSystem;
@@ -84,6 +110,8 @@ export class ShipSystem extends createSystem({}) {
   private audioSystem!: AudioSystem;
   private tempVec = new Vector3();
   private tempVec2 = new Vector3();
+  private tidalForceX = 0;
+  private tidalForceZ = 0;
 
   // Game state (managed by GameSystem)
   public shipsToSpawn = 0;
@@ -384,6 +412,11 @@ export class ShipSystem extends createSystem({}) {
     this.dockCelebrationPool = [];
   }
 
+  setTidalForce(x: number, z: number) {
+    this.tidalForceX = x;
+    this.tidalForceZ = z;
+  }
+
   private spawnSplash(position: Vector3) {
     const count = 20;
     const posArr = new Float32Array(count * 3);
@@ -589,6 +622,12 @@ export class ShipSystem extends createSystem({}) {
         ship.heading += currentStrength * 0.02 * delta * Math.sin(currentAngle - ship.heading);
       }
 
+      // Tidal wave force
+      if (Math.abs(this.tidalForceX) > 0.01 || Math.abs(this.tidalForceZ) > 0.01) {
+        pos.x += this.tidalForceX * delta;
+        pos.z += this.tidalForceZ * delta;
+      }
+
       // Bob on waves
       pos.y = Math.sin(time * 1.5 + i * 2) * 0.15;
 
@@ -596,10 +635,24 @@ export class ShipSystem extends createSystem({}) {
       ship.entity.object3D!.rotation.y = ship.heading;
       ship.entity.object3D!.rotation.z = Math.sin(time * 2 + i) * 0.05;
 
+      // Compute nearest rock (for SOS blink and distress flares)
+      let nearestRockDist = Infinity;
+      for (const rockPos of rockPositions) {
+        const d = pos.distanceTo(rockPos);
+        if (d < nearestRockDist) nearestRockDist = d;
+      }
+
       // Pulse navigation lights
       const lightPulse = ship.isLit ? 2.0 : 0.5 + Math.sin(time * 3 + i) * 0.3;
       ship.portLight.intensity = lightPulse;
       ship.starboardLight.intensity = lightPulse;
+
+      // SOS morse code blink for unlit ships near rocks
+      if (nearestRockDist < 8 && !ship.isLit && ship.shipType <= 2) {
+        const sosOn = sosLightOn(time + i * 1.7);
+        ship.portLight.intensity = sosOn ? 3.0 : 0.1;
+        ship.starboardLight.intensity = sosOn ? 3.0 : 0.1;
+      }
 
       // Emergency ship: fast flashing red
       if (ship.shipType === 3) {
@@ -652,11 +705,6 @@ export class ShipSystem extends createSystem({}) {
       }
 
       // Distress flares — ships near rocks fire flares
-      let nearestRockDist = Infinity;
-      for (const rockPos of rockPositions) {
-        const dist = pos.distanceTo(rockPos);
-        if (dist < nearestRockDist) nearestRockDist = dist;
-      }
       if (nearestRockDist < 8 && !ship.isLit) {
         ship.nearRockTimer += delta;
         ship.flareTimer -= delta;
