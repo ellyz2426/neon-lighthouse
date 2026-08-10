@@ -20,7 +20,7 @@ import { LighthouseSystem } from './lighthouse-system.js';
 import { EnvironmentSystem } from './environment-system.js';
 import { AudioSystem } from './audio-system.js';
 
-// Ship types: 0=fishing, 1=cargo, 2=ferry
+// Ship types: 0=fishing, 1=cargo, 2=ferry, 3=emergency, 4=treasure
 export interface ShipData {
   entity: ReturnType<typeof createSystem.prototype.world.createTransformEntity>;
   group: Group;
@@ -40,6 +40,19 @@ export interface ShipData {
   wakePoints: Points;
   wakePositions: Float32Array;
   wakeIdx: number;
+  // New: illumination glow
+  glowLight: PointLight;
+  // New: distress flare state
+  flareTimer: number;
+  nearRockTimer: number;
+}
+
+interface FlareData {
+  entity: ReturnType<typeof createSystem.prototype.world.createTransformEntity>;
+  points: Points;
+  life: number;
+  posArr: Float32Array;
+  velArr: Float32Array;
 }
 
 const HARBOR_POS = new Vector3(8, 0, -5);
@@ -47,12 +60,15 @@ const DOCK_RADIUS = 4;
 const SPAWN_DISTANCE = 55;
 const BEAM_HIT_RADIUS = 6;
 const WAKE_PARTICLE_COUNT = 30;
+const FLARE_PARTICLE_COUNT = 15;
 
-// Ship type configs
+// Ship type configs (extended with emergency and treasure)
 const SHIP_CONFIGS = [
   { name: 'fishing', hullColor: 0x446688, cabinColor: 0x667799, scale: 0.8, speedMod: 1.2, points: 50, hullW: 0.8, hullH: 0.4, hullD: 2.0 },
   { name: 'cargo', hullColor: 0x554433, cabinColor: 0x665544, scale: 1.3, speedMod: 0.7, points: 150, hullW: 1.8, hullH: 0.7, hullD: 4.0 },
   { name: 'ferry', hullColor: 0xccccdd, cabinColor: 0xddddee, scale: 1.1, speedMod: 0.9, points: 200, hullW: 1.4, hullH: 0.5, hullD: 3.2 },
+  { name: 'emergency', hullColor: 0xcc2222, cabinColor: 0xff4444, scale: 0.9, speedMod: 1.5, points: 300, hullW: 1.0, hullH: 0.4, hullD: 2.5 },
+  { name: 'treasure', hullColor: 0xaa8822, cabinColor: 0xffcc44, scale: 1.2, speedMod: 0.5, points: 500, hullW: 1.6, hullH: 0.6, hullD: 3.5 },
 ];
 
 export class ShipSystem extends createSystem({}) {
@@ -72,6 +88,9 @@ export class ShipSystem extends createSystem({}) {
 
   // Splash particle pool
   private splashPool: { entity: ReturnType<typeof createSystem.prototype.world.createTransformEntity>; points: Points; life: number; posArr: Float32Array; velArr: Float32Array }[] = [];
+
+  // Distress flare pool
+  private flarePool: FlareData[] = [];
 
   init() {
     this.lighthouseSystem = this.world.getSystem(LighthouseSystem)!;
@@ -100,7 +119,7 @@ export class ShipSystem extends createSystem({}) {
 
     // Cabin
     const cabinMat = new MeshStandardMaterial({ color: cfg.cabinColor, roughness: 0.6 });
-    const cabinH = shipType === 2 ? 0.9 : 0.6; // Ferries have taller cabin
+    const cabinH = shipType === 2 ? 0.9 : shipType === 4 ? 0.8 : 0.6;
     const cabinGeo = new BoxGeometry(cfg.hullW * 0.6, cabinH, cfg.hullD * 0.35);
     const cabin = new Mesh(cabinGeo, cabinMat);
     cabin.position.set(0, 0.1 + cfg.hullH / 2 + cabinH / 2, -cfg.hullD * 0.1);
@@ -148,6 +167,33 @@ export class ShipSystem extends createSystem({}) {
       }
     }
 
+    // Emergency ship: flashing red light on top
+    if (shipType === 3) {
+      const emergencyGlowMat = new MeshBasicMaterial({ color: 0xff0000 });
+      const emergencyGlowGeo = new SphereGeometry(0.15, 6, 6);
+      const emergencyGlow = new Mesh(emergencyGlowGeo, emergencyGlowMat);
+      emergencyGlow.position.set(0, 0.1 + cfg.hullH + 1.0, 0);
+      group.add(emergencyGlow);
+
+      const redLight = new PointLight(0xff0000, 2, 8);
+      redLight.position.copy(emergencyGlow.position);
+      group.add(redLight);
+    }
+
+    // Treasure ship: gold accents and glow
+    if (shipType === 4) {
+      const goldMat = new MeshBasicMaterial({ color: 0xffcc00, transparent: true, opacity: 0.8 });
+      const goldRimGeo = new CylinderGeometry(cfg.hullW * 0.55, cfg.hullW * 0.55, 0.1, 8);
+      const goldRim = new Mesh(goldRimGeo, goldMat);
+      goldRim.position.set(0, 0.1 + cfg.hullH + 0.05, 0);
+      group.add(goldRim);
+
+      // Treasure glow
+      const treasureLight = new PointLight(0xffaa00, 2, 10);
+      treasureLight.position.set(0, 0.5, 0);
+      group.add(treasureLight);
+    }
+
     // Navigation lights
     const portLightGeo = new SphereGeometry(0.08, 6, 6);
     const portLightMat = new MeshBasicMaterial({ color: 0xff2222 });
@@ -166,6 +212,11 @@ export class ShipSystem extends createSystem({}) {
     const starboardLight = new PointLight(0x22ff22, 0.8, 5);
     starboardLight.position.copy(starLightMesh.position);
     group.add(starboardLight);
+
+    // Illumination glow light (hidden until beam hits ship)
+    const glowLight = new PointLight(0xffcc44, 0, 8);
+    glowLight.position.set(0, 0.5, 0);
+    group.add(glowLight);
 
     // Scale the whole ship
     group.scale.setScalar(cfg.scale);
@@ -217,10 +268,21 @@ export class ShipSystem extends createSystem({}) {
       wakePoints,
       wakePositions,
       wakeIdx: 0,
+      glowLight,
+      flareTimer: 0,
+      nearRockTimer: 0,
     };
 
     this.ships.push(shipData);
     this.audioSystem?.playShipBell();
+
+    // Special spawn sounds
+    if (shipType === 3) {
+      this.audioSystem?.playDistressHorn();
+    } else if (shipType === 4) {
+      this.audioSystem?.playTreasureChime();
+    }
+
     return shipData;
   }
 
@@ -243,12 +305,28 @@ export class ShipSystem extends createSystem({}) {
     return [f, c, p];
   }
 
+  getSpecialShipCount(): [number, number] {
+    let emergency = 0, treasure = 0;
+    for (const s of this.ships) {
+      if (s.docked || s.sinking) continue;
+      if (s.shipType === 3) emergency++;
+      if (s.shipType === 4) treasure++;
+    }
+    return [emergency, treasure];
+  }
+
   clearAllShips() {
     for (const ship of this.ships) {
       ship.entity.dispose();
       ship.wakeEntity.dispose();
     }
     this.ships = [];
+
+    // Clear flares
+    for (const flare of this.flarePool) {
+      flare.entity.dispose();
+    }
+    this.flarePool = [];
   }
 
   private spawnSplash(position: Vector3) {
@@ -278,6 +356,34 @@ export class ShipSystem extends createSystem({}) {
     this.splashPool.push({ entity, points, life: 1.0, posArr, velArr });
   }
 
+  private spawnDistressFlare(position: Vector3) {
+    const posArr = new Float32Array(FLARE_PARTICLE_COUNT * 3);
+    const velArr = new Float32Array(FLARE_PARTICLE_COUNT * 3);
+    for (let i = 0; i < FLARE_PARTICLE_COUNT; i++) {
+      posArr[i * 3] = position.x;
+      posArr[i * 3 + 1] = position.y + 0.5;
+      posArr[i * 3 + 2] = position.z;
+      const angle = Math.random() * Math.PI * 2;
+      const upSpeed = 5 + Math.random() * 5;
+      velArr[i * 3] = Math.cos(angle) * (0.5 + Math.random());
+      velArr[i * 3 + 1] = upSpeed;
+      velArr[i * 3 + 2] = Math.sin(angle) * (0.5 + Math.random());
+    }
+    const geo = new BufferGeometry();
+    geo.setAttribute('position', new BufferAttribute(posArr, 3));
+    const mat = new PointsMaterial({
+      color: 0xff3322,
+      size: 0.5,
+      transparent: true,
+      opacity: 0.9,
+      blending: AdditiveBlending,
+      depthWrite: false,
+    });
+    const points = new Points(geo, mat);
+    const entity = this.world.createTransformEntity(points);
+    this.flarePool.push({ entity, points, life: 2.5, posArr, velArr });
+  }
+
   update(delta: number, time: number) {
     // Spawn queued ships
     if (this.shipsToSpawn > 0) {
@@ -292,6 +398,7 @@ export class ShipSystem extends createSystem({}) {
     const beamOrigin = this.lighthouseSystem.getBeamOrigin();
     const beamDir = this.lighthouseSystem.getBeamDirection();
     const beamActive = this.lighthouseSystem.isBeamActive();
+    const beamConeAngle = this.lighthouseSystem.getBeamConeAngle();
     const rockPositions = this.envSystem.rockPositions;
     const windStrength = this.envSystem.getWindStrength();
 
@@ -321,7 +428,7 @@ export class ShipSystem extends createSystem({}) {
         if (dot > 0) {
           this.tempVec2.copy(beamDir).multiplyScalar(dot);
           const perpDist = this.tempVec.sub(this.tempVec2).length();
-          const beamWidthAtDist = dot * 0.18;
+          const beamWidthAtDist = dot * beamConeAngle;
           ship.isLit = perpDist < beamWidthAtDist + BEAM_HIT_RADIUS;
         } else {
           ship.isLit = false;
@@ -336,6 +443,10 @@ export class ShipSystem extends createSystem({}) {
       } else {
         ship.litTimer = Math.max(ship.litTimer - delta * 0.5, 0);
       }
+
+      // Illumination glow — ships glow when lit
+      const glowTarget = ship.isLit ? 3.0 : 0;
+      ship.glowLight.intensity += (glowTarget - ship.glowLight.intensity) * delta * 5;
 
       // Navigation
       if (ship.litTimer > 0.3) {
@@ -369,6 +480,21 @@ export class ShipSystem extends createSystem({}) {
       ship.portLight.intensity = lightPulse;
       ship.starboardLight.intensity = lightPulse;
 
+      // Emergency ship: fast flashing red
+      if (ship.shipType === 3) {
+        const flash = Math.sin(time * 10) > 0 ? 3.0 : 0.5;
+        ship.portLight.intensity = flash;
+        ship.starboardLight.intensity = flash;
+        ship.portLight.color.setHex(0xff0000);
+        ship.starboardLight.color.setHex(0xff0000);
+      }
+
+      // Treasure ship: golden pulse
+      if (ship.shipType === 4) {
+        ship.glowLight.color.setHex(0xffaa00);
+        ship.glowLight.intensity = 1.5 + Math.sin(time * 2) * 0.5;
+      }
+
       // Update wake trail
       if (!ship.docked && !ship.sinking) {
         const wIdx = ship.wakeIdx % WAKE_PARTICLE_COUNT;
@@ -377,6 +503,24 @@ export class ShipSystem extends createSystem({}) {
         ship.wakePositions[wIdx * 3 + 2] = pos.z - Math.cos(ship.heading) * 1.5;
         ship.wakeIdx++;
         (ship.wakePoints.geometry.getAttribute('position') as BufferAttribute).needsUpdate = true;
+      }
+
+      // Distress flares — ships near rocks fire flares
+      let nearestRockDist = Infinity;
+      for (const rockPos of rockPositions) {
+        const dist = pos.distanceTo(rockPos);
+        if (dist < nearestRockDist) nearestRockDist = dist;
+      }
+      if (nearestRockDist < 8 && !ship.isLit) {
+        ship.nearRockTimer += delta;
+        ship.flareTimer -= delta;
+        if (ship.flareTimer <= 0 && ship.nearRockTimer > 1.0) {
+          this.spawnDistressFlare(pos.clone());
+          this.audioSystem?.playFlareSound();
+          ship.flareTimer = 3.0 + Math.random() * 2;
+        }
+      } else {
+        ship.nearRockTimer = 0;
       }
 
       // Check harbor dock
@@ -423,6 +567,27 @@ export class ShipSystem extends createSystem({}) {
         splash.velArr[p * 3 + 1] -= 9.8 * delta; // gravity
       }
       (splash.points.geometry.getAttribute('position') as BufferAttribute).needsUpdate = true;
+    }
+
+    // Update distress flares
+    for (let f = this.flarePool.length - 1; f >= 0; f--) {
+      const flare = this.flarePool[f];
+      flare.life -= delta;
+      if (flare.life <= 0) {
+        flare.entity.dispose();
+        this.flarePool.splice(f, 1);
+        continue;
+      }
+      const fMat = flare.points.material as PointsMaterial;
+      fMat.opacity = Math.min(flare.life, 1.0) * 0.9;
+      // Drift with gravity and spread
+      for (let p = 0; p < FLARE_PARTICLE_COUNT; p++) {
+        flare.posArr[p * 3] += flare.velArr[p * 3] * delta;
+        flare.posArr[p * 3 + 1] += flare.velArr[p * 3 + 1] * delta;
+        flare.posArr[p * 3 + 2] += flare.velArr[p * 3 + 2] * delta;
+        flare.velArr[p * 3 + 1] -= 3.0 * delta; // slow gravity for flares
+      }
+      (flare.points.geometry.getAttribute('position') as BufferAttribute).needsUpdate = true;
     }
   }
 }

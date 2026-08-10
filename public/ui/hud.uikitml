@@ -9,15 +9,15 @@
     border-radius: 10;
     border-color: rgba(255, 180, 50, 0.3);
     border-width: 1;
-    width: 500;
-    height: 90;
+    width: 520;
+    height: 100;
   }
   .top-row {
     flex-direction: row;
     align-items: center;
     justify-content: space-between;
-    gap: 14;
-    width: 480;
+    gap: 12;
+    width: 500;
   }
   .stat-group {
     flex-direction: column;
@@ -44,7 +44,7 @@
     font-weight: bold;
   }
   .beam-value {
-    font-size: 16;
+    font-size: 14;
     color: #88ff66;
     font-weight: bold;
   }
@@ -57,7 +57,7 @@
     flex-direction: row;
     align-items: center;
     justify-content: space-between;
-    width: 480;
+    width: 500;
     gap: 8;
   }
   .ship-types {
@@ -86,6 +86,11 @@
   }
   .ferry-count {
     color: #ccccee;
+  }
+  .special-info {
+    font-size: 11;
+    color: #ff6644;
+    font-weight: bold;
   }
   .wave-info {
     font-size: 9;
@@ -117,7 +122,7 @@
     <div class="divider"></div>
     <div class="stat-group">
       <div class="stat-label">BEAM</div>
-      <div class="beam-value" id="beam-power">ON</div>
+      <div class="beam-value" id="beam-power">100%</div>
     </div>
   </div>
   <div class="bottom-row">
@@ -135,6 +140,7 @@
         <div class="type-count ferry-count" id="ferry-count">0</div>
       </div>
     </div>
+    <div class="special-info" id="special-info"></div>
     <div class="wave-info" id="wave-start-info"></div>
   </div>
 </Panel>

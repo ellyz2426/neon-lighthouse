@@ -35,6 +35,11 @@ export const OceanTile = createComponent('OceanTile', {
   waveSpeed: { type: Types.Float32, default: 1.0 },
 });
 
+export const Flare = createComponent('Flare', {
+  life: { type: Types.Float32, default: 2.0 },
+  speed: { type: Types.Float32, default: 8.0 },
+});
+
 export default defineComponents([
   Ship,
   Rock,
@@ -42,4 +47,5 @@ export default defineComponents([
   LighthouseBeam,
   StarField,
   OceanTile,
+  Flare,
 ]);

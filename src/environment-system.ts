@@ -80,6 +80,9 @@ export class EnvironmentSystem extends createSystem({}) {
   public rockPositions: Vector3[] = [];
   public harborPosition = HARBOR_POS.clone();
 
+  // Horizon glow
+  private horizonGlowMesh!: Mesh;
+
   init() {
     this.buildOcean();
     this.buildLighthouse();
@@ -91,6 +94,7 @@ export class EnvironmentSystem extends createSystem({}) {
     this.buildClouds();
     this.buildRainSystem();
     this.buildBuoys();
+    this.buildHorizonGlow();
   }
 
   private buildOcean() {
@@ -527,6 +531,22 @@ export class EnvironmentSystem extends createSystem({}) {
     return this.windStrength;
   }
 
+  private buildHorizonGlow() {
+    // Atmospheric glow band at the waterline
+    const glowGeo = new CylinderGeometry(95, 95, 3, 32, 1, true);
+    const glowMat = new MeshBasicMaterial({
+      color: 0xff8833,
+      transparent: true,
+      opacity: 0.04,
+      blending: AdditiveBlending,
+      depthWrite: false,
+      side: DoubleSide,
+    });
+    this.horizonGlowMesh = new Mesh(glowGeo, glowMat);
+    const entity = this.world.createTransformEntity(this.horizonGlowMesh);
+    entity.object3D!.position.set(0, 0.5, 0);
+  }
+
   update(delta: number, time: number) {
     // Animate ocean shader
     const mat = this.oceanMesh.material as ShaderMaterial;
@@ -608,5 +628,9 @@ export class EnvironmentSystem extends createSystem({}) {
       cloud.position.x += delta * 0.5;
       if (cloud.position.x > 100) cloud.position.x = -100;
     }
+
+    // Horizon glow pulse
+    const horizonMat = this.horizonGlowMesh.material as MeshBasicMaterial;
+    horizonMat.opacity = 0.025 + Math.sin(time * 0.3) * 0.015;
   }
 }

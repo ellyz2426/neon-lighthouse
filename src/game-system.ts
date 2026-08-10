@@ -15,9 +15,9 @@ interface WaveConfig {
   hasRain: boolean;
   windStrength: number;
   skyShift: [number, number, number];
+  emergencyChance: number;
+  treasureChance: number;
 }
-
-const SHIP_TYPE_NAMES = ['Fishing', 'Cargo', 'Ferry'];
 
 export class GameSystem extends createSystem({}) {
   private state: GameState = 'menu';
@@ -35,6 +35,14 @@ export class GameSystem extends createSystem({}) {
   private waveHasStorm = false;
   private waveStartTimer = 0;
   private showingWaveStart = false;
+
+  // Special event timers
+  private emergencyTimer = 0;
+  private treasureTimer = 0;
+  private emergencyChance = 0;
+  private treasureChance = 0;
+  private emergencySpawned = false;
+  private treasureSpawned = false;
 
   private shipSystem!: ShipSystem;
   private lighthouseSystem!: LighthouseSystem;
@@ -115,10 +123,19 @@ export class GameSystem extends createSystem({}) {
       this.showState('menu');
     });
 
-    // Wave complete
+    // Wave complete — next wave and upgrades
     this.waveCompletePanel?.getElementById('btn-next-wave')?.addEventListener('click', () => {
       this.audioSystem.playUIClick();
       this.startWave();
+    });
+    this.waveCompletePanel?.getElementById('btn-upgrade-range')?.addEventListener('click', () => {
+      this.tryUpgrade('range');
+    });
+    this.waveCompletePanel?.getElementById('btn-upgrade-width')?.addEventListener('click', () => {
+      this.tryUpgrade('width');
+    });
+    this.waveCompletePanel?.getElementById('btn-upgrade-energy')?.addEventListener('click', () => {
+      this.tryUpgrade('energy');
     });
 
     // Game over
@@ -130,6 +147,30 @@ export class GameSystem extends createSystem({}) {
       this.audioSystem.playUIClick();
       this.showState('menu');
     });
+  }
+
+  private tryUpgrade(type: 'range' | 'width' | 'energy') {
+    const cost = 300;
+    if (this.score < cost) return;
+    this.score -= cost;
+    this.audioSystem.playUpgradeSound();
+
+    if (type === 'range') {
+      this.lighthouseSystem.upgradeRange();
+    } else if (type === 'width') {
+      this.lighthouseSystem.upgradeWidth();
+    } else {
+      this.lighthouseSystem.upgradeCapacity();
+    }
+
+    this.updateUpgradePanel();
+  }
+
+  private updateUpgradePanel() {
+    const canAfford = this.score >= 300;
+    const affordText = canAfford ? '300 pts' : 'NEED 300';
+    this.waveCompletePanel?.getElementById('upgrade-cost')?.setProperties({ text: affordText });
+    this.waveCompletePanel?.getElementById('upgrade-score')?.setProperties({ text: String(this.score) });
   }
 
   private showState(newState: GameState) {
@@ -168,6 +209,8 @@ export class GameSystem extends createSystem({}) {
     this.wave++;
     this.waveShipsSaved = 0;
     this.waveShipsLost = 0;
+    this.emergencySpawned = false;
+    this.treasureSpawned = false;
     this.shipSystem.clearAllShips();
 
     const config = this.getWaveConfig(this.wave);
@@ -176,6 +219,12 @@ export class GameSystem extends createSystem({}) {
     this.shipSystem.spawnInterval = config.spawnInterval;
     this.shipSystem.baseSpeed = config.shipSpeed;
     this.shipSystem.spawnTimer = 0.5;
+
+    // Store special event chances
+    this.emergencyChance = config.emergencyChance;
+    this.treasureChance = config.treasureChance;
+    this.emergencyTimer = 5 + Math.random() * 10;
+    this.treasureTimer = 8 + Math.random() * 15;
 
     this.envSystem.setFogDensity(config.fogDensity);
     this.envSystem.setSkyColor(config.skyShift[0], config.skyShift[1], config.skyShift[2]);
@@ -188,6 +237,8 @@ export class GameSystem extends createSystem({}) {
       this.lightningTimer = 3 + Math.random() * 5;
     }
 
+    // Reset beam energy for the new wave
+    this.lighthouseSystem.resetEnergy();
     this.lighthouseSystem.setBeamActive(true);
     this.showState('playing');
 
@@ -206,7 +257,6 @@ export class GameSystem extends createSystem({}) {
   private getWaveConfig(wave: number): WaveConfig {
     const hasRain = wave >= 3 && Math.random() < Math.min(wave * 0.12, 0.8);
     const windStr = wave >= 4 ? Math.min((wave - 3) * 0.15, 1.0) : 0;
-    // Sky shifts from deep blue to stormy grey-green as waves progress
     const skyR = 0.01 + Math.min(wave * 0.005, 0.04);
     const skyG = 0.02 + Math.min(wave * 0.003, 0.03);
     const skyB = 0.06 + Math.min(wave * 0.005, 0.04);
@@ -220,6 +270,8 @@ export class GameSystem extends createSystem({}) {
       hasRain,
       windStrength: windStr,
       skyShift: [skyR, skyG, skyB],
+      emergencyChance: wave >= 3 ? Math.min((wave - 2) * 0.15, 0.6) : 0,
+      treasureChance: wave >= 5 ? Math.min((wave - 4) * 0.1, 0.4) : 0,
     };
   }
 
@@ -229,15 +281,31 @@ export class GameSystem extends createSystem({}) {
     this.hudPanel?.getElementById('wave')?.setProperties({ text: String(this.wave) });
     const activeShips = this.shipSystem.getActiveShipCount() + this.shipSystem.shipsToSpawn;
     this.hudPanel?.getElementById('ships-remaining')?.setProperties({ text: String(activeShips) });
-    this.hudPanel?.getElementById('beam-power')?.setProperties({
-      text: this.lighthouseSystem.isBeamActive() ? 'ON' : 'OFF',
-    });
+
+    // Beam energy bar
+    const energy = this.lighthouseSystem.getBeamEnergy();
+    const maxEnergy = this.lighthouseSystem.getMaxEnergy();
+    const energyPct = Math.round((energy / maxEnergy) * 100);
+    const beamText = this.lighthouseSystem.isOverheated() ? 'OVERHEAT' :
+      this.lighthouseSystem.isBeamActive() ? `${energyPct}%` : `OFF ${energyPct}%`;
+    this.hudPanel?.getElementById('beam-power')?.setProperties({ text: beamText });
 
     // Ship type counts
     const [f, c, p] = this.shipSystem.getShipCountByType();
     this.hudPanel?.getElementById('fishing-count')?.setProperties({ text: String(f) });
     this.hudPanel?.getElementById('cargo-count')?.setProperties({ text: String(c) });
     this.hudPanel?.getElementById('ferry-count')?.setProperties({ text: String(p) });
+
+    // Special ships
+    const [em, tr] = this.shipSystem.getSpecialShipCount();
+    if (em > 0 || tr > 0) {
+      const specials: string[] = [];
+      if (em > 0) specials.push(`\ud83d\udea8${em}`);
+      if (tr > 0) specials.push(`\ud83d\udcb0${tr}`);
+      this.hudPanel?.getElementById('special-info')?.setProperties({ text: specials.join(' ') });
+    } else {
+      this.hudPanel?.getElementById('special-info')?.setProperties({ text: '' });
+    }
   }
 
   private updateCompass() {
@@ -247,7 +315,7 @@ export class GameSystem extends createSystem({}) {
       Math.PI, 3 * Math.PI / 4, Math.PI / 2, Math.PI / 4,
       0, -Math.PI / 4, -Math.PI / 2, -3 * Math.PI / 4,
     ];
-    const activeInDir: number[] = new Array(8).fill(-1); // -1 = none, or shipType
+    const activeInDir: number[] = new Array(8).fill(-1);
 
     for (const ship of ships) {
       if (ship.docked || ship.sinking) continue;
@@ -263,13 +331,13 @@ export class GameSystem extends createSystem({}) {
           bestIdx = d;
         }
       }
-      // Use highest-value ship type in that direction
       if (activeInDir[bestIdx] < ship.shipType) {
         activeInDir[bestIdx] = ship.shipType;
       }
     }
 
-    const typeColors = ['#4488cc', '#cc8844', '#ccccee']; // fishing=blue, cargo=orange, ferry=white
+    // Colors: fishing=blue, cargo=orange, ferry=white, emergency=red, treasure=gold
+    const typeColors = ['#4488cc', '#cc8844', '#ccccee', '#ff2222', '#ffcc00'];
     const inactiveColor = 'rgba(180, 200, 220, 0.5)';
     const inactiveBg = 'rgba(100, 120, 140, 0.3)';
 
@@ -277,7 +345,7 @@ export class GameSystem extends createSystem({}) {
       const dirEl = this.compassPanel?.getElementById(`dir-${dirs[d]}`);
       const dotEl = this.compassPanel?.getElementById(`dot-${dirs[d]}`);
       if (activeInDir[d] >= 0) {
-        const col = typeColors[activeInDir[d]];
+        const col = typeColors[Math.min(activeInDir[d], typeColors.length - 1)];
         dirEl?.setProperties({ color: col });
         dotEl?.setProperties({ backgroundColor: col });
       } else {
@@ -306,6 +374,10 @@ export class GameSystem extends createSystem({}) {
         anyActive = true;
       }
     }
+
+    // Also check for active special ships still in play
+    const [em, tr] = this.shipSystem.getSpecialShipCount();
+    if (em > 0 || tr > 0) anyActive = true;
 
     if (anyActive) return;
 
@@ -342,6 +414,7 @@ export class GameSystem extends createSystem({}) {
     this.waveCompletePanel?.getElementById('bonus')?.setProperties({ text: `+${perfectBonus}` });
     this.waveCompletePanel?.getElementById('stars')?.setProperties({ text: starStr });
 
+    this.updateUpgradePanel();
     this.showState('wave-complete');
   }
 
@@ -404,6 +477,34 @@ export class GameSystem extends createSystem({}) {
           this.envSystem.triggerLightning();
           this.audioSystem.playThunder();
           this.lightningTimer = 4 + Math.random() * 8;
+        }
+      }
+
+      // Special event: emergency ship
+      if (!this.emergencySpawned && this.emergencyChance > 0) {
+        this.emergencyTimer -= delta;
+        if (this.emergencyTimer <= 0 && Math.random() < this.emergencyChance) {
+          this.shipSystem.spawnShip(3); // emergency type
+          this.emergencySpawned = true;
+          this.hudPanel?.getElementById('wave-start-info')?.setProperties({
+            text: '\ud83d\udea8 EMERGENCY RESCUE \u2014 Ship in distress!',
+          });
+          this.showingWaveStart = true;
+          this.waveStartTimer = 3.0;
+        }
+      }
+
+      // Special event: treasure ship
+      if (!this.treasureSpawned && this.treasureChance > 0) {
+        this.treasureTimer -= delta;
+        if (this.treasureTimer <= 0 && Math.random() < this.treasureChance) {
+          this.shipSystem.spawnShip(4); // treasure type
+          this.treasureSpawned = true;
+          this.hudPanel?.getElementById('wave-start-info')?.setProperties({
+            text: '\ud83d\udcb0 TREASURE BARGE spotted on the horizon!',
+          });
+          this.showingWaveStart = true;
+          this.waveStartTimer = 3.0;
         }
       }
     }

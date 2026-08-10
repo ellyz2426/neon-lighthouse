@@ -8,6 +8,10 @@ export class AudioSystem extends createSystem({}) {
   private ambientOsc: OscillatorNode | null = null;
   private ambientGain: GainNode | null = null;
 
+  // Ambient timers
+  private seagullTimer = 5;
+  private waveCrashTimer = 3;
+
   init() {
     const initAudio = () => {
       if (this.initialized) return;
@@ -89,20 +93,6 @@ export class AudioSystem extends createSystem({}) {
     gain2.connect(this.masterGain);
     osc2.start(now + 0.15);
     osc2.stop(now + 0.7);
-  }
-
-  playBeamHum() {
-    if (!this.ctx) return;
-    const now = this.ctx.currentTime;
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.value = 120;
-    gain.gain.value = 0.03;
-    osc.connect(gain);
-    gain.connect(this.masterGain);
-    osc.start(now);
-    osc.stop(now + 0.1);
   }
 
   playDockChime() {
@@ -281,7 +271,173 @@ export class AudioSystem extends createSystem({}) {
     osc.stop(now + 1);
   }
 
-  update(_delta: number, _time: number) {
-    // Nothing per-frame needed
+  // New sounds
+
+  playDistressHorn() {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    // Urgent two-tone horn
+    for (let rep = 0; rep < 3; rep++) {
+      const t = now + rep * 0.4;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(220, t);
+      osc.frequency.linearRampToValueAtTime(280, t + 0.15);
+      gain.gain.setValueAtTime(0.15, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start(t);
+      osc.stop(t + 0.3);
+    }
+  }
+
+  playTreasureChime() {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    // Magical ascending sparkle
+    const notes = [523, 659, 784, 1047, 1319];
+    for (let i = 0; i < notes.length; i++) {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = notes[i];
+      const t = now + i * 0.08;
+      gain.gain.setValueAtTime(0.12, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start(t);
+      osc.stop(t + 0.4);
+    }
+  }
+
+  playFlareSound() {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    // Rising whistle
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(400, now);
+    osc.frequency.exponentialRampToValueAtTime(2000, now + 0.4);
+    gain.gain.setValueAtTime(0.08, now);
+    gain.gain.linearRampToValueAtTime(0.15, now + 0.2);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.5);
+
+    // Pop at the top
+    const pop = this.ctx.createOscillator();
+    const popGain = this.ctx.createGain();
+    pop.type = 'square';
+    pop.frequency.value = 1500;
+    popGain.gain.setValueAtTime(0.1, now + 0.35);
+    popGain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+    pop.connect(popGain);
+    popGain.connect(this.masterGain);
+    pop.start(now + 0.35);
+    pop.stop(now + 0.5);
+  }
+
+  playSeagull() {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    // Two-tone seagull cry
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(1200, now);
+    osc.frequency.linearRampToValueAtTime(1600, now + 0.15);
+    osc.frequency.linearRampToValueAtTime(1100, now + 0.4);
+    osc.frequency.linearRampToValueAtTime(1400, now + 0.55);
+    osc.frequency.linearRampToValueAtTime(900, now + 0.8);
+    gain.gain.setValueAtTime(0.02, now);
+    gain.gain.linearRampToValueAtTime(0.05, now + 0.1);
+    gain.gain.linearRampToValueAtTime(0.03, now + 0.4);
+    gain.gain.linearRampToValueAtTime(0.04, now + 0.55);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.8);
+  }
+
+  playWaveCrash() {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    // Soft white noise burst for wave breaking
+    const bufferSize = Math.floor(this.ctx.sampleRate * 1.5);
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      const env = Math.sin((i / bufferSize) * Math.PI);
+      data[i] = (Math.random() * 2 - 1) * env * 0.3;
+    }
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = buffer;
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.04, now + 0.3);
+    gain.gain.linearRampToValueAtTime(0.06, now + 0.8);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 1.5);
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 800;
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.masterGain);
+    noise.start(now);
+    noise.stop(now + 1.5);
+  }
+
+  playUpgradeSound() {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    // Power-up ascending sweep
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(300, now);
+    osc.frequency.exponentialRampToValueAtTime(900, now + 0.3);
+    gain.gain.setValueAtTime(0.15, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.4);
+
+    // Confirm chime
+    const chime = this.ctx.createOscillator();
+    const chimeGain = this.ctx.createGain();
+    chime.type = 'sine';
+    chime.frequency.value = 880;
+    chimeGain.gain.setValueAtTime(0.12, now + 0.25);
+    chimeGain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+    chime.connect(chimeGain);
+    chimeGain.connect(this.masterGain);
+    chime.start(now + 0.25);
+    chime.stop(now + 0.6);
+  }
+
+  update(delta: number, _time: number) {
+    if (!this.initialized) return;
+
+    // Ambient seagull calls
+    this.seagullTimer -= delta;
+    if (this.seagullTimer <= 0) {
+      this.playSeagull();
+      this.seagullTimer = 8 + Math.random() * 15;
+    }
+
+    // Ambient wave crashes
+    this.waveCrashTimer -= delta;
+    if (this.waveCrashTimer <= 0) {
+      this.playWaveCrash();
+      this.waveCrashTimer = 5 + Math.random() * 10;
+    }
   }
 }
