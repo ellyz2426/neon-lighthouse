@@ -1,0 +1,109 @@
+<!-- settings.uikitml -->
+<style>
+  .root {
+    flex-direction: column;
+    align-items: center;
+    padding: 24;
+    gap: 14;
+    background-color: rgba(2, 8, 24, 0.94);
+    border-radius: 16;
+    border-color: rgba(100, 150, 255, 0.4);
+    border-width: 2;
+    width: 300;
+  }
+  .heading {
+    font-size: 24;
+    color: #88aaff;
+    font-weight: bold;
+  }
+  .setting-row {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    width: 250;
+    padding-top: 6;
+    padding-bottom: 6;
+  }
+  .setting-label {
+    font-size: 14;
+    color: rgba(180, 200, 220, 0.8);
+  }
+  .setting-btn {
+    padding-left: 10;
+    padding-right: 10;
+    padding-top: 6;
+    padding-bottom: 6;
+    background-color: rgba(100, 150, 255, 0.2);
+    border-radius: 6;
+    cursor: pointer;
+  }
+  .setting-btn-text {
+    font-size: 13;
+    color: #ffffff;
+  }
+  .controls-section {
+    flex-direction: column;
+    gap: 6;
+    width: 250;
+    padding-top: 8;
+    border-color: rgba(100, 150, 255, 0.2);
+    border-width: 1;
+    border-radius: 8;
+    padding: 10;
+  }
+  .controls-heading {
+    font-size: 14;
+    color: #88aaff;
+    font-weight: bold;
+  }
+  .control-line {
+    font-size: 11;
+    color: rgba(180, 200, 220, 0.7);
+  }
+  .btn {
+    padding: 10;
+    background-color: rgba(100, 150, 255, 0.15);
+    border-radius: 8;
+    border-color: rgba(100, 150, 255, 0.3);
+    border-width: 1;
+    width: 240;
+    align-items: center;
+    cursor: pointer;
+    margin-top: 6;
+  }
+  .btn-text {
+    font-size: 16;
+    color: #ffffff;
+    font-weight: bold;
+  }
+</style>
+<Panel class="root">
+  <div class="heading">SETTINGS</div>
+  <div class="setting-row">
+    <div class="setting-label">Beam Sensitivity</div>
+    <div class="setting-btn" id="btn-sensitivity">
+      <div class="setting-btn-text" id="sensitivity-val">NORMAL</div>
+    </div>
+  </div>
+  <div class="setting-row">
+    <div class="setting-label">Volume</div>
+    <div class="setting-btn" id="btn-volume">
+      <div class="setting-btn-text" id="volume-val">ON</div>
+    </div>
+  </div>
+  <div class="setting-row">
+    <div class="setting-label">Nav Buoys</div>
+    <div class="setting-btn" id="btn-buoys">
+      <div class="setting-btn-text" id="buoy-val">ON</div>
+    </div>
+  </div>
+  <div class="controls-section">
+    <div class="controls-heading">CONTROLS</div>
+    <div class="control-line">Trigger — Toggle beam on/off</div>
+    <div class="control-line">Pointer — Aim lighthouse beam</div>
+    <div class="control-line">Thumbstick — Look around</div>
+  </div>
+  <div class="btn" id="btn-back">
+    <div class="btn-text">BACK</div>
+  </div>
+</Panel>

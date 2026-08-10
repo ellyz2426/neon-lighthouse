@@ -1,0 +1,87 @@
+<!-- game-over.uikitml -->
+<style>
+  .root {
+    flex-direction: column;
+    align-items: center;
+    padding: 24;
+    gap: 14;
+    background-color: rgba(2, 8, 24, 0.94);
+    border-radius: 16;
+    border-color: rgba(255, 60, 60, 0.4);
+    border-width: 2;
+    width: 300;
+  }
+  .heading {
+    font-size: 28;
+    color: #ff4444;
+    font-weight: bold;
+  }
+  .stat-row {
+    flex-direction: row;
+    justify-content: space-between;
+    width: 240;
+    padding-top: 4;
+    padding-bottom: 4;
+  }
+  .stat-label {
+    font-size: 14;
+    color: rgba(180, 200, 220, 0.7);
+  }
+  .stat-val {
+    font-size: 14;
+    color: #ffffff;
+    font-weight: bold;
+  }
+  .final-score-label {
+    font-size: 14;
+    color: rgba(255, 180, 50, 0.7);
+  }
+  .final-score-val {
+    font-size: 22;
+    color: #ffb432;
+    font-weight: bold;
+  }
+  .new-high {
+    font-size: 14;
+    color: #66ff99;
+    font-weight: bold;
+  }
+  .btn {
+    padding: 12;
+    background-color: rgba(255, 180, 50, 0.15);
+    border-radius: 8;
+    border-color: rgba(255, 180, 50, 0.3);
+    border-width: 1;
+    width: 240;
+    align-items: center;
+    cursor: pointer;
+    margin-top: 6;
+  }
+  .btn-text {
+    font-size: 16;
+    color: #ffffff;
+    font-weight: bold;
+  }
+</style>
+<Panel class="root">
+  <div class="heading">GAME OVER</div>
+  <div class="stat-row">
+    <div class="final-score-label">FINAL SCORE</div>
+    <div class="final-score-val" id="final-score">0</div>
+  </div>
+  <div class="stat-row">
+    <div class="stat-label">Waves Survived</div>
+    <div class="stat-val" id="waves-survived">0</div>
+  </div>
+  <div class="stat-row">
+    <div class="stat-label">Total Ships Saved</div>
+    <div class="stat-val" id="total-ships-saved">0</div>
+  </div>
+  <div class="new-high" id="new-high-label"> </div>
+  <div class="btn" id="btn-play-again">
+    <div class="btn-text">PLAY AGAIN</div>
+  </div>
+  <div class="btn" id="btn-main-menu">
+    <div class="btn-text">MAIN MENU</div>
+  </div>
+</Panel>

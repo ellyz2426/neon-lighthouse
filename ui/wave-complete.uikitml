@@ -1,0 +1,194 @@
+<!-- wave-complete.uikitml -->
+<style>
+  .root {
+    flex-direction: column;
+    align-items: center;
+    padding: 24;
+    gap: 12;
+    background-color: rgba(2, 8, 24, 0.94);
+    border-radius: 16;
+    border-color: rgba(100, 255, 150, 0.4);
+    border-width: 2;
+    width: 320;
+  }
+  .heading {
+    font-size: 26;
+    color: #66ff99;
+    font-weight: bold;
+  }
+  .wave-num {
+    font-size: 20;
+    color: #ffffff;
+    font-weight: bold;
+  }
+  .stat-row {
+    flex-direction: row;
+    justify-content: space-between;
+    width: 260;
+    padding-top: 3;
+    padding-bottom: 3;
+  }
+  .stat-label {
+    font-size: 14;
+    color: rgba(180, 200, 220, 0.7);
+  }
+  .stat-val {
+    font-size: 14;
+    color: #ffffff;
+    font-weight: bold;
+  }
+  .bonus-val {
+    font-size: 14;
+    color: #ffb432;
+    font-weight: bold;
+  }
+  .stars {
+    font-size: 22;
+    color: #ffb432;
+  }
+  .combo-text {
+    font-size: 12;
+    color: #ff9944;
+    font-weight: bold;
+  }
+  .log-section {
+    flex-direction: column;
+    align-items: center;
+    gap: 4;
+    width: 280;
+    padding: 8;
+    background-color: rgba(255, 200, 100, 0.06);
+    border-radius: 8;
+    border-color: rgba(255, 200, 100, 0.15);
+    border-width: 1;
+    margin-top: 4;
+  }
+  .log-heading {
+    font-size: 11;
+    color: rgba(255, 200, 100, 0.6);
+    font-weight: bold;
+  }
+  .log-entry {
+    font-size: 10;
+    color: rgba(255, 220, 150, 0.8);
+    text-align: center;
+  }
+  .upgrade-section {
+    flex-direction: column;
+    align-items: center;
+    gap: 6;
+    width: 280;
+    padding: 10;
+    background-color: rgba(100, 150, 255, 0.08);
+    border-radius: 8;
+    border-color: rgba(100, 150, 255, 0.2);
+    border-width: 1;
+    margin-top: 4;
+  }
+  .upgrade-heading {
+    font-size: 13;
+    color: #88aaff;
+    font-weight: bold;
+  }
+  .upgrade-score-row {
+    flex-direction: row;
+    justify-content: space-between;
+    width: 250;
+  }
+  .upgrade-score-label {
+    font-size: 11;
+    color: rgba(180, 200, 220, 0.6);
+  }
+  .upgrade-score-val {
+    font-size: 11;
+    color: #ffb432;
+    font-weight: bold;
+  }
+  .upgrade-row {
+    flex-direction: row;
+    gap: 6;
+    width: 260;
+  }
+  .upgrade-btn {
+    padding-top: 6;
+    padding-bottom: 6;
+    padding-left: 8;
+    padding-right: 8;
+    background-color: rgba(100, 150, 255, 0.15);
+    border-radius: 6;
+    border-color: rgba(100, 150, 255, 0.25);
+    border-width: 1;
+    align-items: center;
+    cursor: pointer;
+    width: 80;
+  }
+  .upgrade-btn-text {
+    font-size: 10;
+    color: #bbccff;
+    font-weight: bold;
+  }
+  .upgrade-cost {
+    font-size: 9;
+    color: rgba(180, 200, 220, 0.5);
+  }
+  .btn {
+    padding: 12;
+    background-color: rgba(100, 255, 150, 0.15);
+    border-radius: 8;
+    border-color: rgba(100, 255, 150, 0.3);
+    border-width: 1;
+    width: 260;
+    align-items: center;
+    cursor: pointer;
+    margin-top: 4;
+  }
+  .btn-text {
+    font-size: 16;
+    color: #ffffff;
+    font-weight: bold;
+  }
+</style>
+<Panel class="root">
+  <div class="heading">WAVE COMPLETE</div>
+  <div class="wave-num" id="wave-num">Wave 1</div>
+  <div class="stat-row">
+    <div class="stat-label">Ships Saved</div>
+    <div class="stat-val" id="ships-saved">0</div>
+  </div>
+  <div class="stat-row">
+    <div class="stat-label">Ships Lost</div>
+    <div class="stat-val" id="ships-lost">0</div>
+  </div>
+  <div class="stat-row">
+    <div class="stat-label">Bonus</div>
+    <div class="bonus-val" id="bonus">+0</div>
+  </div>
+  <div class="stars" id="stars">- - -</div>
+  <div class="combo-text" id="max-combo"></div>
+  <div class="log-section">
+    <div class="log-heading">KEEPER'S LOG</div>
+    <div class="log-entry" id="keeper-log">"The light burns on."</div>
+  </div>
+  <div class="upgrade-section">
+    <div class="upgrade-heading">LIGHTHOUSE UPGRADES</div>
+    <div class="upgrade-score-row">
+      <div class="upgrade-score-label">Your Score</div>
+      <div class="upgrade-score-val" id="upgrade-score">0</div>
+    </div>
+    <div class="upgrade-row">
+      <div class="upgrade-btn" id="btn-upgrade-range">
+        <div class="upgrade-btn-text">RANGE</div>
+      </div>
+      <div class="upgrade-btn" id="btn-upgrade-width">
+        <div class="upgrade-btn-text">WIDTH</div>
+      </div>
+      <div class="upgrade-btn" id="btn-upgrade-energy">
+        <div class="upgrade-btn-text">ENERGY</div>
+      </div>
+    </div>
+    <div class="upgrade-cost" id="upgrade-cost">300 pts each</div>
+  </div>
+  <div class="btn" id="btn-next-wave">
+    <div class="btn-text">NEXT WAVE</div>
+  </div>
+</Panel>
