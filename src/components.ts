@@ -9,6 +9,8 @@ export const Ship = createComponent('Ship', {
   sinking: { type: Types.Boolean, default: false },
   sinkProgress: { type: Types.Float32, default: 0 },
   spawnAngle: { type: Types.Float32, default: 0 },
+  shipType: { type: Types.Int32, default: 0 }, // 0=fishing, 1=cargo, 2=ferry
+  points: { type: Types.Int32, default: 100 },
 });
 
 export const Rock = createComponent('Rock', {

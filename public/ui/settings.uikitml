@@ -91,6 +91,12 @@
       <div class="setting-btn-text" id="volume-val">ON</div>
     </div>
   </div>
+  <div class="setting-row">
+    <div class="setting-label">Nav Buoys</div>
+    <div class="setting-btn" id="btn-buoys">
+      <div class="setting-btn-text" id="buoy-val">ON</div>
+    </div>
+  </div>
   <div class="controls-section">
     <div class="controls-heading">CONTROLS</div>
     <div class="control-line">Trigger — Toggle beam on/off</div>

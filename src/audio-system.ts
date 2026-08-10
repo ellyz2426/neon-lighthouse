@@ -9,7 +9,6 @@ export class AudioSystem extends createSystem({}) {
   private ambientGain: GainNode | null = null;
 
   init() {
-    // Defer AudioContext creation until user interaction
     const initAudio = () => {
       if (this.initialized) return;
       this.initialized = true;
@@ -27,7 +26,6 @@ export class AudioSystem extends createSystem({}) {
 
   private startAmbient() {
     if (!this.ctx) return;
-    // Ocean ambient — low rumble
     this.ambientOsc = this.ctx.createOscillator();
     this.ambientOsc.type = 'sine';
     this.ambientOsc.frequency.value = 40;
@@ -81,7 +79,6 @@ export class AudioSystem extends createSystem({}) {
     osc.start(now);
     osc.stop(now + 0.8);
 
-    // Second ring
     const osc2 = this.ctx.createOscillator();
     const gain2 = this.ctx.createGain();
     osc2.type = 'sine';
@@ -111,7 +108,7 @@ export class AudioSystem extends createSystem({}) {
   playDockChime() {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
-    const notes = [523, 659, 784]; // C5, E5, G5
+    const notes = [523, 659, 784];
     for (let i = 0; i < notes.length; i++) {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
@@ -130,7 +127,6 @@ export class AudioSystem extends createSystem({}) {
   playCrashSound() {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
-    // White noise burst for crash
     const bufferSize = this.ctx.sampleRate * 0.5;
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
     const data = buffer.getChannelData(0);
@@ -151,7 +147,6 @@ export class AudioSystem extends createSystem({}) {
     noise.start(now);
     noise.stop(now + 0.5);
 
-    // Low boom
     const osc = this.ctx.createOscillator();
     const boomGain = this.ctx.createGain();
     osc.type = 'sine';
@@ -168,7 +163,7 @@ export class AudioSystem extends createSystem({}) {
   playWaveComplete() {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
-    const notes = [392, 494, 587, 659, 784]; // G4 B4 D5 E5 G5
+    const notes = [392, 494, 587, 659, 784];
     for (let i = 0; i < notes.length; i++) {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
@@ -202,7 +197,7 @@ export class AudioSystem extends createSystem({}) {
   playGameOver() {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
-    const notes = [440, 370, 311, 262]; // A4 F#4 Eb4 C4
+    const notes = [440, 370, 311, 262];
     for (let i = 0; i < notes.length; i++) {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
@@ -243,6 +238,47 @@ export class AudioSystem extends createSystem({}) {
     gain.connect(this.masterGain);
     noise.start(now);
     noise.stop(now + 2);
+  }
+
+  playThunder() {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+
+    // Low rumbling boom
+    const bufferSize = this.ctx.sampleRate * 1.5;
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      const env = Math.exp(-i / (bufferSize * 0.4));
+      data[i] = (Math.random() * 2 - 1) * env;
+    }
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = buffer;
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.25, now + 0.05);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 1.5);
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 300;
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.masterGain);
+    noise.start(now);
+    noise.stop(now + 1.5);
+
+    // Sub-bass
+    const osc = this.ctx.createOscillator();
+    const subGain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(50, now);
+    osc.frequency.exponentialRampToValueAtTime(20, now + 1);
+    subGain.gain.setValueAtTime(0.2, now);
+    subGain.gain.exponentialRampToValueAtTime(0.001, now + 1);
+    osc.connect(subGain);
+    subGain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 1);
   }
 
   update(_delta: number, _time: number) {
