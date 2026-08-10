@@ -35,6 +35,8 @@ const NUM_ROCKS = 12;
 const STAR_COUNT = 600;
 const RAIN_COUNT = 2000;
 const NUM_BUOYS = 6;
+const CURRENT_ARROW_COUNT = 10;
+const SONAR_MAX_RADIUS = 60;
 
 export class EnvironmentSystem extends createSystem({}) {
   private oceanMesh!: Mesh;
@@ -83,6 +85,33 @@ export class EnvironmentSystem extends createSystem({}) {
   // Horizon glow
   private horizonGlowMesh!: Mesh;
 
+  // Day/night cycle
+  private dayPhase = 0; // 0=midnight, 0.25=dawn, 0.5=noon, 0.75=dusk
+  private targetDayPhase = 0;
+  private ambientLightRef!: AmbientLight;
+  private dayLerpColor = new Color();
+
+  // Aurora borealis
+  private auroraMesh!: Mesh;
+  private auroraActive = false;
+
+  // Ocean currents
+  private currentDirAngle = 0;
+  private currentStrength = 0;
+  private targetCurrentStrength = 0;
+  private currentArrows: Mesh[] = [];
+  private currentArrowEntities: { obj: ReturnType<EnvironmentSystem['world']['createTransformEntity']> }[] = [];
+
+  // Sonar ring
+  private sonarRing!: Mesh;
+  private sonarActive = false;
+  private sonarRadius = 0;
+
+  // Fog sonar override
+  private fogOverride = false;
+  private fogOverrideTimer = 0;
+  private savedFogDensity = 0;
+
   init() {
     this.buildOcean();
     this.buildLighthouse();
@@ -95,6 +124,9 @@ export class EnvironmentSystem extends createSystem({}) {
     this.buildRainSystem();
     this.buildBuoys();
     this.buildHorizonGlow();
+    this.buildAurora();
+    this.buildCurrentArrows();
+    this.buildSonarRing();
   }
 
   private buildOcean() {
@@ -107,6 +139,7 @@ export class EnvironmentSystem extends createSystem({}) {
         uShallowColor: { value: new Color(0x003344) },
         uFoamColor: { value: new Color(0x00ffcc) },
         uWindStrength: { value: 0 },
+        uCausticIntensity: { value: 0.25 },
       },
       vertexShader: `
         uniform float uTime;
@@ -129,6 +162,8 @@ export class EnvironmentSystem extends createSystem({}) {
         uniform vec3 uDeepColor;
         uniform vec3 uShallowColor;
         uniform vec3 uFoamColor;
+        uniform float uTime;
+        uniform float uCausticIntensity;
         varying vec2 vUv;
         varying float vElevation;
         void main() {
@@ -136,6 +171,12 @@ export class EnvironmentSystem extends createSystem({}) {
           vec3 col = mix(uDeepColor, uShallowColor, depth);
           float foam = smoothstep(0.35, 0.5, vElevation);
           col = mix(col, uFoamColor, foam * 0.15);
+          // Caustic light pattern
+          vec2 cuv = vUv * 8.0;
+          float c1 = sin(cuv.x * 3.0 + uTime * 0.7) * sin(cuv.y * 3.0 + uTime * 0.5);
+          float c2 = sin(cuv.x * 5.0 - uTime * 0.4) * sin(cuv.y * 4.0 + uTime * 0.6);
+          float caustic = pow(max((c1 + c2) * 0.5 + 0.5, 0.0), 3.0) * uCausticIntensity;
+          col += vec3(0.1, 0.3, 0.25) * caustic;
           gl_FragColor = vec4(col, 0.92);
         }
       `,
@@ -158,21 +199,18 @@ export class EnvironmentSystem extends createSystem({}) {
   private buildLighthouse() {
     this.lighthouseGroup = new Group();
 
-    // Tower base
     const baseMat = new MeshStandardMaterial({ color: 0x334455, roughness: 0.8 });
     const baseGeo = new CylinderGeometry(2.5, 3.0, 2, 12);
     const baseMesh = new Mesh(baseGeo, baseMat);
     baseMesh.position.set(0, 1, 0);
     this.lighthouseGroup.add(baseMesh);
 
-    // Tower body
     const towerMat = new MeshStandardMaterial({ color: 0xcccccc, roughness: 0.6 });
     const towerGeo = new CylinderGeometry(1.5, 2.2, LIGHTHOUSE_HEIGHT - 2, 12);
     const towerMesh = new Mesh(towerGeo, towerMat);
     towerMesh.position.set(0, (LIGHTHOUSE_HEIGHT - 2) / 2 + 2, 0);
     this.lighthouseGroup.add(towerMesh);
 
-    // Red stripe bands
     const stripeMat = new MeshStandardMaterial({ color: 0xcc2222, roughness: 0.5 });
     for (let i = 0; i < 3; i++) {
       const stripeGeo = new CylinderGeometry(
@@ -186,7 +224,6 @@ export class EnvironmentSystem extends createSystem({}) {
       this.lighthouseGroup.add(stripe);
     }
 
-    // Lantern room
     const lanternMat = new MeshStandardMaterial({
       color: 0xffcc44,
       emissive: 0xffaa22,
@@ -199,19 +236,16 @@ export class EnvironmentSystem extends createSystem({}) {
     this.lanternMesh.position.set(0, LIGHTHOUSE_HEIGHT + 0.75, 0);
     this.lighthouseGroup.add(this.lanternMesh);
 
-    // Lantern cap
     const capMat = new MeshStandardMaterial({ color: 0x222222 });
     const capGeo = new ConeGeometry(2.0, 1.5, 8);
     const capMesh = new Mesh(capGeo, capMat);
     capMesh.position.set(0, LIGHTHOUSE_HEIGHT + 2.25, 0);
     this.lighthouseGroup.add(capMesh);
 
-    // Lantern light
     this.lanternLight = new PointLight(0xffaa22, 3, 30);
     this.lanternLight.position.set(0, LIGHTHOUSE_HEIGHT + 0.75, 0);
     this.lighthouseGroup.add(this.lanternLight);
 
-    // Railing
     const railMat = new MeshStandardMaterial({ color: 0x444444 });
     for (let i = 0; i < 8; i++) {
       const angle = (i / 8) * Math.PI * 2;
@@ -309,7 +343,6 @@ export class EnvironmentSystem extends createSystem({}) {
         rockGroup.add(smallRock);
       }
 
-      // Foam ring around rocks as warning
       const foamGeo = new RingGeometry(mainSize + 0.5, mainSize + 2.0, 16);
       foamGeo.rotateX(-Math.PI / 2);
       const foamMesh = new Mesh(foamGeo, foamMat.clone());
@@ -326,6 +359,7 @@ export class EnvironmentSystem extends createSystem({}) {
   private buildStarfield() {
     const positions = new Float32Array(STAR_COUNT * 3);
     const sizes = new Float32Array(STAR_COUNT);
+    const phases = new Float32Array(STAR_COUNT);
     for (let i = 0; i < STAR_COUNT; i++) {
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.random() * Math.PI * 0.4;
@@ -333,16 +367,46 @@ export class EnvironmentSystem extends createSystem({}) {
       positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
       positions[i * 3 + 1] = r * Math.cos(phi);
       positions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
-      sizes[i] = 0.5 + Math.random() * 1.5;
+      sizes[i] = 0.3 + Math.random() * 2.0;
+      phases[i] = Math.random() * Math.PI * 2;
     }
     const geo = new BufferGeometry();
     geo.setAttribute('position', new BufferAttribute(positions, 3));
-    geo.setAttribute('size', new BufferAttribute(sizes, 1));
-    const mat = new PointsMaterial({
-      color: 0xffffff,
-      size: 0.8,
+    geo.setAttribute('aSize', new BufferAttribute(sizes, 1));
+    geo.setAttribute('aPhase', new BufferAttribute(phases, 1));
+    const mat = new ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uBrightness: { value: 1.0 },
+      },
+      vertexShader: `
+        attribute float aSize;
+        attribute float aPhase;
+        uniform float uTime;
+        varying float vBright;
+        void main() {
+          float speed = 1.0 + aPhase * 0.5;
+          float twinkle = sin(uTime * speed + aPhase * 6.28) * 0.5 + 0.5;
+          float pulse = sin(uTime * 0.3 + aPhase * 3.14) * 0.3 + 0.7;
+          vBright = twinkle * pulse;
+          vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+          gl_PointSize = aSize * (300.0 / -mvPosition.z) * (0.7 + twinkle * 0.3);
+          gl_Position = projectionMatrix * mvPosition;
+        }
+      `,
+      fragmentShader: `
+        uniform float uBrightness;
+        varying float vBright;
+        void main() {
+          float dist = length(gl_PointCoord - vec2(0.5));
+          if (dist > 0.5) discard;
+          float glow = 1.0 - smoothstep(0.0, 0.5, dist);
+          float alpha = glow * vBright * uBrightness * 0.9;
+          vec3 warmWhite = mix(vec3(0.8, 0.85, 1.0), vec3(1.0, 0.95, 0.8), vBright);
+          gl_FragColor = vec4(warmWhite, alpha);
+        }
+      `,
       transparent: true,
-      opacity: 0.8,
       blending: AdditiveBlending,
       depthWrite: false,
     });
@@ -352,9 +416,9 @@ export class EnvironmentSystem extends createSystem({}) {
 
   private buildLighting() {
     const ambient = new AmbientLight(0x112244, 0.3);
+    this.ambientLightRef = ambient;
     this.world.createTransformEntity(ambient);
 
-    // Lightning flash light (starts invisible)
     this.lightningFlash = new AmbientLight(0xccddff, 0);
     this.world.createTransformEntity(this.lightningFlash);
   }
@@ -362,7 +426,6 @@ export class EnvironmentSystem extends createSystem({}) {
   private buildMoon() {
     const moonGroup = new Group();
 
-    // Moon disc
     const moonMat = new MeshBasicMaterial({
       color: 0xeeeedd,
       transparent: true,
@@ -372,7 +435,6 @@ export class EnvironmentSystem extends createSystem({}) {
     this.moonMesh = new Mesh(moonGeo, moonMat);
     moonGroup.add(this.moonMesh);
 
-    // Moon glow
     const glowMat = new MeshBasicMaterial({
       color: 0xaabbcc,
       transparent: true,
@@ -408,11 +470,7 @@ export class EnvironmentSystem extends createSystem({}) {
       const cloudGroup = new Group();
       const numBlobs = 3 + Math.floor(Math.random() * 3);
       for (let b = 0; b < numBlobs; b++) {
-        const blobGeo = new SphereGeometry(
-          4 + Math.random() * 6,
-          8,
-          6,
-        );
+        const blobGeo = new SphereGeometry(4 + Math.random() * 6, 8, 6);
         const blob = new Mesh(blobGeo, cloudMat);
         blob.position.set(
           (Math.random() - 0.5) * 12,
@@ -464,19 +522,16 @@ export class EnvironmentSystem extends createSystem({}) {
     for (const pos of buoyPositions) {
       const buoyGroup = new Group();
 
-      // Buoy body
       const bodyGeo = new CylinderGeometry(0.3, 0.4, 1.0, 8);
       const body = new Mesh(bodyGeo, buoyBodyMat);
       body.position.set(0, 0.5, 0);
       buoyGroup.add(body);
 
-      // Yellow band
       const bandGeo = new CylinderGeometry(0.35, 0.35, 0.2, 8);
       const band = new Mesh(bandGeo, buoyBandMat);
       band.position.set(0, 0.7, 0);
       buoyGroup.add(band);
 
-      // Top light
       const topGeo = new SphereGeometry(0.12, 6, 6);
       const topMat = new MeshBasicMaterial({ color: 0xffff00 });
       const top = new Mesh(topGeo, topMat);
@@ -493,6 +548,114 @@ export class EnvironmentSystem extends createSystem({}) {
       this.buoyGroups.push(buoyGroup);
     }
   }
+
+  private buildHorizonGlow() {
+    const glowGeo = new CylinderGeometry(95, 95, 3, 32, 1, true);
+    const glowMat = new MeshBasicMaterial({
+      color: 0xff8833,
+      transparent: true,
+      opacity: 0.04,
+      blending: AdditiveBlending,
+      depthWrite: false,
+      side: DoubleSide,
+    });
+    this.horizonGlowMesh = new Mesh(glowGeo, glowMat);
+    const entity = this.world.createTransformEntity(this.horizonGlowMesh);
+    entity.object3D!.position.set(0, 0.5, 0);
+  }
+
+  private buildAurora() {
+    const segments = 64;
+    const geo = new PlaneGeometry(140, 10, segments, 2);
+    const mat = new ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uOpacity: { value: 0 },
+      },
+      vertexShader: `
+        uniform float uTime;
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          vec3 pos = position;
+          pos.y += sin(pos.x * 0.04 + uTime * 0.3) * 6.0;
+          pos.y += sin(pos.x * 0.07 + uTime * 0.5) * 3.0;
+          pos.z += cos(pos.x * 0.03 + uTime * 0.2) * 3.0;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float uTime;
+        uniform float uOpacity;
+        varying vec2 vUv;
+        void main() {
+          float wave = sin(vUv.x * 6.28 + uTime * 0.4) * 0.5 + 0.5;
+          vec3 green = vec3(0.1, 0.9, 0.4);
+          vec3 cyan = vec3(0.1, 0.6, 0.9);
+          vec3 purple = vec3(0.5, 0.2, 0.8);
+          vec3 col = mix(green, cyan, wave);
+          col = mix(col, purple, sin(vUv.x * 3.14 + uTime * 0.2) * 0.5 + 0.5);
+          float edge = smoothstep(0.0, 0.3, vUv.y) * smoothstep(1.0, 0.7, vUv.y);
+          float shimmer = 0.6 + 0.4 * sin(vUv.x * 25.0 + uTime * 2.0);
+          float curtain = smoothstep(0.0, 0.1, vUv.x) * smoothstep(1.0, 0.9, vUv.x);
+          gl_FragColor = vec4(col, edge * shimmer * curtain * uOpacity * 0.35);
+        }
+      `,
+      transparent: true,
+      blending: AdditiveBlending,
+      depthWrite: false,
+      side: DoubleSide,
+    });
+    this.auroraMesh = new Mesh(geo, mat);
+    const entity = this.world.createTransformEntity(this.auroraMesh);
+    entity.object3D!.position.set(0, 85, -70);
+    entity.object3D!.rotation.x = -0.15;
+    this.auroraMesh.visible = false;
+  }
+
+  private buildCurrentArrows() {
+    const arrowMat = new MeshBasicMaterial({
+      color: 0x44ddcc,
+      transparent: true,
+      opacity: 0,
+      blending: AdditiveBlending,
+      depthWrite: false,
+    });
+
+    for (let i = 0; i < CURRENT_ARROW_COUNT; i++) {
+      const arrowGeo = new ConeGeometry(0.4, 1.8, 4);
+      arrowGeo.rotateX(-Math.PI / 2);
+      const arrow = new Mesh(arrowGeo, arrowMat.clone());
+      const angle = (i / CURRENT_ARROW_COUNT) * Math.PI * 2;
+      const radius = 12 + (i % 3) * 10;
+      const entity = this.world.createTransformEntity(arrow);
+      entity.object3D!.position.set(
+        Math.cos(angle) * radius,
+        0.15,
+        Math.sin(angle) * radius,
+      );
+      this.currentArrows.push(arrow);
+      this.currentArrowEntities.push({ obj: entity });
+    }
+  }
+
+  private buildSonarRing() {
+    const geo = new RingGeometry(0.8, 1.2, 32);
+    geo.rotateX(-Math.PI / 2);
+    const mat = new MeshBasicMaterial({
+      color: 0x44ffaa,
+      transparent: true,
+      opacity: 0,
+      blending: AdditiveBlending,
+      depthWrite: false,
+      side: DoubleSide,
+    });
+    this.sonarRing = new Mesh(geo, mat);
+    const entity = this.world.createTransformEntity(this.sonarRing);
+    entity.object3D!.position.set(0, 0.3, 0);
+  }
+
+  // --- Setters ---
 
   setFogDensity(density: number) {
     this.targetFogDensity = density;
@@ -531,20 +694,54 @@ export class EnvironmentSystem extends createSystem({}) {
     return this.windStrength;
   }
 
-  private buildHorizonGlow() {
-    // Atmospheric glow band at the waterline
-    const glowGeo = new CylinderGeometry(95, 95, 3, 32, 1, true);
-    const glowMat = new MeshBasicMaterial({
-      color: 0xff8833,
-      transparent: true,
-      opacity: 0.04,
-      blending: AdditiveBlending,
-      depthWrite: false,
-      side: DoubleSide,
-    });
-    this.horizonGlowMesh = new Mesh(glowGeo, glowMat);
-    const entity = this.world.createTransformEntity(this.horizonGlowMesh);
-    entity.object3D!.position.set(0, 0.5, 0);
+  // Day/night
+  setDayPhase(phase: number) {
+    this.targetDayPhase = Math.max(0, Math.min(1, phase));
+  }
+
+  getDayPhase(): number {
+    return this.dayPhase;
+  }
+
+  // Aurora
+  setAuroraActive(active: boolean) {
+    this.auroraActive = active;
+    this.auroraMesh.visible = active;
+  }
+
+  // Currents
+  setCurrentStrength(strength: number) {
+    this.targetCurrentStrength = strength;
+  }
+
+  setCurrentDirection(angle: number) {
+    this.currentDirAngle = angle;
+  }
+
+  getCurrentDirAngle(): number {
+    return this.currentDirAngle;
+  }
+
+  getCurrentStrength(): number {
+    return this.currentStrength;
+  }
+
+  // Sonar
+  triggerSonar() {
+    this.sonarActive = true;
+    this.sonarRadius = 0;
+    // Temporarily reduce fog
+    this.fogOverride = true;
+    this.fogOverrideTimer = 3.0;
+    this.savedFogDensity = this.targetFogDensity;
+  }
+
+  getSonarRadius(): number {
+    return this.sonarActive ? this.sonarRadius : 0;
+  }
+
+  isSonarActive(): boolean {
+    return this.sonarActive;
   }
 
   update(delta: number, time: number) {
@@ -556,10 +753,23 @@ export class EnvironmentSystem extends createSystem({}) {
     this.windStrength += (this.targetWindStrength - this.windStrength) * delta * 2;
     mat.uniforms.uWindStrength.value = this.windStrength;
 
+    // Day/night cycle interpolation
+    this.dayPhase += (this.targetDayPhase - this.dayPhase) * delta * 0.8;
+    this.updateDayNight(time);
+
     // Animate fog
     if (this.world.scene.fog instanceof FogExp2) {
       const fog = this.world.scene.fog;
-      fog.density += (this.targetFogDensity - fog.density) * delta * 2;
+      let targetDensity = this.targetFogDensity;
+      // Fog sonar override
+      if (this.fogOverride) {
+        targetDensity = this.savedFogDensity * 0.2;
+        this.fogOverrideTimer -= delta;
+        if (this.fogOverrideTimer <= 0) {
+          this.fogOverride = false;
+        }
+      }
+      fog.density += (targetDensity - fog.density) * delta * 3;
     }
 
     // Pulse harbor lights
@@ -571,9 +781,12 @@ export class EnvironmentSystem extends createSystem({}) {
     this.lanternLight.intensity = 2.5 + Math.sin(time * 3) * 0.5;
     this.lanternMesh.rotation.y = time * 0.5;
 
-    // Twinkle stars
-    const starMat = this.starPoints.material as PointsMaterial;
-    starMat.opacity = 0.6 + Math.sin(time * 0.5) * 0.2;
+    // Animate stars — update shader uniforms
+    const starMat = this.starPoints.material as ShaderMaterial;
+    starMat.uniforms.uTime.value = time;
+    // Stars dimmer during day
+    const nightFactor = 1 - Math.max(0, Math.sin(this.dayPhase * Math.PI));
+    starMat.uniforms.uBrightness.value = 0.2 + nightFactor * 0.8;
 
     // Animate rock foam
     for (const foam of this.foamMeshes) {
@@ -632,5 +845,76 @@ export class EnvironmentSystem extends createSystem({}) {
     // Horizon glow pulse
     const horizonMat = this.horizonGlowMesh.material as MeshBasicMaterial;
     horizonMat.opacity = 0.025 + Math.sin(time * 0.3) * 0.015;
+
+    // Aurora animation
+    if (this.auroraActive) {
+      const auroraMat = this.auroraMesh.material as ShaderMaterial;
+      auroraMat.uniforms.uTime.value = time;
+      const targetOpacity = this.auroraActive ? 1.0 : 0;
+      auroraMat.uniforms.uOpacity.value += (targetOpacity - auroraMat.uniforms.uOpacity.value) * delta * 2;
+    }
+
+    // Current arrows
+    this.currentStrength += (this.targetCurrentStrength - this.currentStrength) * delta * 2;
+    if (this.currentStrength > 0.01) {
+      for (let i = 0; i < this.currentArrows.length; i++) {
+        const arrow = this.currentArrows[i];
+        const aMat = arrow.material as MeshBasicMaterial;
+        // Pulse opacity
+        const phase = (time * 1.5 + i * 0.6) % (Math.PI * 2);
+        aMat.opacity = this.currentStrength * (0.1 + Math.sin(phase) * 0.08);
+        // Point arrow in current direction and bob gently
+        const ent = this.currentArrowEntities[i].obj;
+        ent.object3D!.rotation.y = this.currentDirAngle;
+        ent.object3D!.position.y = 0.15 + Math.sin(time + i * 2) * 0.1;
+      }
+    } else {
+      for (const arrow of this.currentArrows) {
+        (arrow.material as MeshBasicMaterial).opacity = 0;
+      }
+    }
+
+    // Sonar ring expansion
+    if (this.sonarActive) {
+      this.sonarRadius += delta * 45;
+      const scale = Math.max(this.sonarRadius, 0.1);
+      this.sonarRing.scale.set(scale, 1, scale);
+      const sonarMat = this.sonarRing.material as MeshBasicMaterial;
+      sonarMat.opacity = Math.max(0, 0.5 * (1 - this.sonarRadius / SONAR_MAX_RADIUS));
+      if (this.sonarRadius >= SONAR_MAX_RADIUS) {
+        this.sonarActive = false;
+        sonarMat.opacity = 0;
+      }
+    }
+
+    // Caustic intensity — brighter during day, dimmer at night in storms
+    const causticTarget = 0.15 + (1 - this.windStrength * 0.5) * 0.2;
+    const cMat = this.oceanMesh.material as ShaderMaterial;
+    const curr = cMat.uniforms.uCausticIntensity.value as number;
+    cMat.uniforms.uCausticIntensity.value = curr + (causticTarget - curr) * delta * 2;
+  }
+
+  private updateDayNight(time: number) {
+    // Day phase: 0=midnight, 0.25=dawn, 0.5=noon, 0.75=dusk
+    const dayBrightness = Math.max(0, Math.sin(this.dayPhase * Math.PI));
+
+    // Ambient light intensity
+    const nightAmbient = 0.15;
+    const dayAmbient = 0.6;
+    this.ambientLightRef.intensity = nightAmbient + dayBrightness * (dayAmbient - nightAmbient);
+
+    // Ambient light color shifts: night=blue-ish, day=warm-ish
+    this.dayLerpColor.setRGB(
+      0.07 + dayBrightness * 0.4,
+      0.08 + dayBrightness * 0.35,
+      0.17 + dayBrightness * 0.1,
+    );
+    this.ambientLightRef.color.copy(this.dayLerpColor);
+
+    // Moon brightness — visible at night, faded during day
+    if (this.moonMesh) {
+      const moonMat = this.moonMesh.material as MeshBasicMaterial;
+      moonMat.opacity = 0.9 * (1 - dayBrightness * 0.8);
+    }
   }
 }

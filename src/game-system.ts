@@ -1,4 +1,4 @@
-import { createSystem, UIKitMLAsset } from '@iwsdk/core';
+import { createSystem, UIKitMLAsset, InputComponent } from '@iwsdk/core';
 import { ShipSystem } from './ship-system.js';
 import { LighthouseSystem } from './lighthouse-system.js';
 import { AudioSystem } from './audio-system.js';
@@ -17,6 +17,10 @@ interface WaveConfig {
   skyShift: [number, number, number];
   emergencyChance: number;
   treasureChance: number;
+  currentStrength: number;
+  currentAngle: number;
+  dayPhase: number;
+  hasAurora: boolean;
 }
 
 export class GameSystem extends createSystem({}) {
@@ -43,6 +47,12 @@ export class GameSystem extends createSystem({}) {
   private treasureChance = 0;
   private emergencySpawned = false;
   private treasureSpawned = false;
+
+  // Fog sonar mechanic
+  private sonarCooldown = 0;
+  private sonarReady = true;
+  private sonarCooldownMax = 12;
+  private lastSonarRadius = 0;
 
   private shipSystem!: ShipSystem;
   private lighthouseSystem!: LighthouseSystem;
@@ -76,6 +86,7 @@ export class GameSystem extends createSystem({}) {
     this.compassPanel = this.world.getSceneObject<UIKitMLAsset>('compass-panel-node');
 
     this.setupPanelButtons();
+    this.setupSonarInput();
     this.showState('menu');
   }
 
@@ -123,7 +134,7 @@ export class GameSystem extends createSystem({}) {
       this.showState('menu');
     });
 
-    // Wave complete — next wave and upgrades
+    // Wave complete
     this.waveCompletePanel?.getElementById('btn-next-wave')?.addEventListener('click', () => {
       this.audioSystem.playUIClick();
       this.startWave();
@@ -147,6 +158,36 @@ export class GameSystem extends createSystem({}) {
       this.audioSystem.playUIClick();
       this.showState('menu');
     });
+  }
+
+  private setupSonarInput() {
+    // Keyboard: F key activates sonar
+    document.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.code === 'KeyF' && this.state === 'playing') {
+        this.activateSonar();
+      }
+    });
+  }
+
+  private activateSonar() {
+    if (!this.sonarReady || this.state !== 'playing') return;
+    // Costs 20% beam energy to use sonar
+    const energy = this.lighthouseSystem.getBeamEnergy();
+    if (energy < this.lighthouseSystem.getMaxEnergy() * 0.15) return;
+
+    this.sonarReady = false;
+    this.sonarCooldown = this.sonarCooldownMax;
+    this.lastSonarRadius = 0;
+
+    this.envSystem.triggerSonar();
+    this.audioSystem.playSonarPing();
+    this.audioSystem.playFoghorn();
+
+    this.hudPanel?.getElementById('wave-start-info')?.setProperties({
+      text: '\ud83d\udce1 SONAR PULSE \u2014 Ships revealed!',
+    });
+    this.showingWaveStart = true;
+    this.waveStartTimer = 2.0;
   }
 
   private tryUpgrade(type: 'range' | 'width' | 'energy') {
@@ -198,6 +239,9 @@ export class GameSystem extends createSystem({}) {
     this.envSystem.setFogDensity(0.012);
     this.envSystem.setRainActive(false);
     this.envSystem.setWindStrength(0);
+    this.envSystem.setDayPhase(0);
+    this.envSystem.setAuroraActive(false);
+    this.envSystem.setCurrentStrength(0);
 
     this.menuPanel?.getElementById('high-score')?.setProperties({ text: String(this.highScore) });
     this.menuPanel?.getElementById('best-wave')?.setProperties({ text: String(this.bestWave) });
@@ -211,6 +255,8 @@ export class GameSystem extends createSystem({}) {
     this.waveShipsLost = 0;
     this.emergencySpawned = false;
     this.treasureSpawned = false;
+    this.sonarReady = true;
+    this.sonarCooldown = 0;
     this.shipSystem.clearAllShips();
 
     const config = this.getWaveConfig(this.wave);
@@ -220,7 +266,6 @@ export class GameSystem extends createSystem({}) {
     this.shipSystem.baseSpeed = config.shipSpeed;
     this.shipSystem.spawnTimer = 0.5;
 
-    // Store special event chances
     this.emergencyChance = config.emergencyChance;
     this.treasureChance = config.treasureChance;
     this.emergencyTimer = 5 + Math.random() * 10;
@@ -231,13 +276,26 @@ export class GameSystem extends createSystem({}) {
     this.envSystem.setRainActive(config.hasRain);
     this.envSystem.setWindStrength(config.windStrength);
 
+    // Day/night cycle
+    this.envSystem.setDayPhase(config.dayPhase);
+
+    // Ocean currents
+    this.envSystem.setCurrentStrength(config.currentStrength);
+    this.envSystem.setCurrentDirection(config.currentAngle);
+
+    // Aurora borealis
+    this.envSystem.setAuroraActive(config.hasAurora);
+
+    // Set ambient drone tonality based on storminess
+    const storminess = config.windStrength + (config.hasRain ? 0.3 : 0) + config.currentStrength * 0.5;
+    this.audioSystem.setDroneTone(Math.min(storminess, 1));
+
     this.waveHasStorm = config.stormChance > Math.random();
     if (this.waveHasStorm) {
       this.audioSystem.playStormWind();
       this.lightningTimer = 3 + Math.random() * 5;
     }
 
-    // Reset beam energy for the new wave
     this.lighthouseSystem.resetEnergy();
     this.lighthouseSystem.setBeamActive(true);
     this.showState('playing');
@@ -247,8 +305,14 @@ export class GameSystem extends createSystem({}) {
     this.waveStartTimer = 3.0;
     const difficulty = this.wave <= 3 ? 'CALM' : this.wave <= 6 ? 'ROUGH' : this.wave <= 9 ? 'STORM' : 'TEMPEST';
     const weather = config.hasRain ? (this.waveHasStorm ? '\u26a1 Thunder' : '\ud83c\udf27 Rain') : '\u2b50 Clear';
+    const timeOfDay = config.dayPhase < 0.15 ? '\ud83c\udf19 Night' : config.dayPhase < 0.35 ? '\ud83c\udf05 Dawn' : config.dayPhase < 0.65 ? '\u2600\ufe0f Day' : '\ud83c\udf07 Dusk';
+    const extras: string[] = [];
+    if (config.currentStrength > 0.1) extras.push('\ud83c\udf0a Currents');
+    if (config.hasAurora) extras.push('\u2728 Aurora');
+    const extraStr = extras.length > 0 ? ' \u2022 ' + extras.join(' ') : '';
+
     this.hudPanel?.getElementById('wave-start-info')?.setProperties({
-      text: `Wave ${this.wave} \u2022 ${difficulty} \u2022 ${weather} \u2022 ${config.shipCount} ships`,
+      text: `Wave ${this.wave} \u2022 ${difficulty} \u2022 ${weather} \u2022 ${timeOfDay}${extraStr}`,
     });
 
     this.updateHUD();
@@ -261,6 +325,25 @@ export class GameSystem extends createSystem({}) {
     const skyG = 0.02 + Math.min(wave * 0.003, 0.03);
     const skyB = 0.06 + Math.min(wave * 0.005, 0.04);
 
+    // Day/night cycle: alternating, with dawn between waves
+    // Even waves tend toward dawn/day, odd waves toward dusk/night
+    let dayPhase: number;
+    if (wave <= 2) {
+      dayPhase = 0.25 + wave * 0.1; // dawn → early day
+    } else if (wave % 2 === 0) {
+      dayPhase = 0.3 + Math.random() * 0.2; // day-ish
+    } else {
+      dayPhase = 0.8 + Math.random() * 0.15; // night-ish (wraps)
+      if (dayPhase > 1) dayPhase -= 1;
+    }
+
+    // Currents from wave 5+
+    const currentStr = wave >= 5 ? Math.min((wave - 4) * 0.12, 0.6) : 0;
+    const currentAngle = Math.random() * Math.PI * 2;
+
+    // Aurora from wave 7+ (only at night)
+    const hasAurora = wave >= 7 && dayPhase < 0.2 && Math.random() < 0.6;
+
     return {
       shipCount: 3 + wave * 2,
       spawnInterval: Math.max(1.5, 4 - wave * 0.3),
@@ -272,6 +355,10 @@ export class GameSystem extends createSystem({}) {
       skyShift: [skyR, skyG, skyB],
       emergencyChance: wave >= 3 ? Math.min((wave - 2) * 0.15, 0.6) : 0,
       treasureChance: wave >= 5 ? Math.min((wave - 4) * 0.1, 0.4) : 0,
+      currentStrength: currentStr,
+      currentAngle,
+      dayPhase,
+      hasAurora,
     };
   }
 
@@ -306,6 +393,14 @@ export class GameSystem extends createSystem({}) {
     } else {
       this.hudPanel?.getElementById('special-info')?.setProperties({ text: '' });
     }
+
+    // Sonar cooldown display
+    if (!this.sonarReady) {
+      const cd = Math.ceil(this.sonarCooldown);
+      this.hudPanel?.getElementById('sonar-status')?.setProperties({ text: `SONAR: ${cd}s` });
+    } else {
+      this.hudPanel?.getElementById('sonar-status')?.setProperties({ text: 'SONAR: [F]' });
+    }
   }
 
   private updateCompass() {
@@ -336,7 +431,6 @@ export class GameSystem extends createSystem({}) {
       }
     }
 
-    // Colors: fishing=blue, cargo=orange, ferry=white, emergency=red, treasure=gold
     const typeColors = ['#4488cc', '#cc8844', '#ccccee', '#ff2222', '#ffcc00'];
     const inactiveColor = 'rgba(180, 200, 220, 0.5)';
     const inactiveBg = 'rgba(100, 120, 140, 0.3)';
@@ -375,28 +469,29 @@ export class GameSystem extends createSystem({}) {
       }
     }
 
-    // Also check for active special ships still in play
     const [em, tr] = this.shipSystem.getSpecialShipCount();
     if (em > 0 || tr > 0) anyActive = true;
 
     if (anyActive) return;
 
-    // Wave done
     this.waveShipsSaved = docked;
     this.waveShipsLost = this.waveShipTotal - docked;
 
-    // Score based on ship points
     const perfectBonus = this.waveShipsLost === 0 ? 500 : 0;
     const waveScore = dockedPoints + perfectBonus;
     this.score += waveScore;
     this.totalShipsSaved += docked;
 
-    // Lose lives
     this.lives -= this.waveShipsLost;
 
     // Clear weather
     this.envSystem.setRainActive(false);
     this.envSystem.setWindStrength(0);
+    this.envSystem.setCurrentStrength(0);
+    this.envSystem.setAuroraActive(false);
+    // Transition to dawn between waves
+    this.envSystem.setDayPhase(0.3);
+    this.audioSystem.setDroneTone(0);
 
     if (this.lives <= 0) {
       this.gameOver();
@@ -422,6 +517,9 @@ export class GameSystem extends createSystem({}) {
     this.audioSystem.playGameOver();
     this.envSystem.setRainActive(false);
     this.envSystem.setWindStrength(0);
+    this.envSystem.setCurrentStrength(0);
+    this.envSystem.setAuroraActive(false);
+    this.audioSystem.setDroneTone(0);
 
     let isNewHigh = false;
     if (this.score > this.highScore) {
@@ -480,11 +578,34 @@ export class GameSystem extends createSystem({}) {
         }
       }
 
+      // XR sonar input: squeeze triggers sonar
+      const leftPad = this.world.input.xr.gamepads.left;
+      if (leftPad?.getButtonDown(InputComponent.Squeeze)) {
+        this.activateSonar();
+      }
+
+      // Sonar cooldown
+      if (!this.sonarReady) {
+        this.sonarCooldown -= delta;
+        if (this.sonarCooldown <= 0) {
+          this.sonarReady = true;
+        }
+      }
+
+      // Sonar reveals ships as the ring expands
+      if (this.envSystem.isSonarActive()) {
+        const sonarR = this.envSystem.getSonarRadius();
+        if (sonarR > this.lastSonarRadius + 5) {
+          this.shipSystem.sonarReveal(sonarR);
+          this.lastSonarRadius = sonarR;
+        }
+      }
+
       // Special event: emergency ship
       if (!this.emergencySpawned && this.emergencyChance > 0) {
         this.emergencyTimer -= delta;
         if (this.emergencyTimer <= 0 && Math.random() < this.emergencyChance) {
-          this.shipSystem.spawnShip(3); // emergency type
+          this.shipSystem.spawnShip(3);
           this.emergencySpawned = true;
           this.hudPanel?.getElementById('wave-start-info')?.setProperties({
             text: '\ud83d\udea8 EMERGENCY RESCUE \u2014 Ship in distress!',
@@ -498,7 +619,7 @@ export class GameSystem extends createSystem({}) {
       if (!this.treasureSpawned && this.treasureChance > 0) {
         this.treasureTimer -= delta;
         if (this.treasureTimer <= 0 && Math.random() < this.treasureChance) {
-          this.shipSystem.spawnShip(4); // treasure type
+          this.shipSystem.spawnShip(4);
           this.treasureSpawned = true;
           this.hudPanel?.getElementById('wave-start-info')?.setProperties({
             text: '\ud83d\udcb0 TREASURE BARGE spotted on the horizon!',

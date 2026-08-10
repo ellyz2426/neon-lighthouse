@@ -40,11 +40,16 @@ export interface ShipData {
   wakePoints: Points;
   wakePositions: Float32Array;
   wakeIdx: number;
-  // New: illumination glow
   glowLight: PointLight;
-  // New: distress flare state
   flareTimer: number;
   nearRockTimer: number;
+  // Lantern trail
+  lanternTrailEntity: ReturnType<typeof createSystem.prototype.world.createTransformEntity>;
+  lanternTrailPoints: Points;
+  lanternTrailPositions: Float32Array;
+  lanternTrailIdx: number;
+  // Ship horn state
+  hornTimer: number;
 }
 
 interface FlareData {
@@ -61,8 +66,9 @@ const SPAWN_DISTANCE = 55;
 const BEAM_HIT_RADIUS = 6;
 const WAKE_PARTICLE_COUNT = 30;
 const FLARE_PARTICLE_COUNT = 15;
+const LANTERN_TRAIL_COUNT = 40;
 
-// Ship type configs (extended with emergency and treasure)
+// Ship type configs
 const SHIP_CONFIGS = [
   { name: 'fishing', hullColor: 0x446688, cabinColor: 0x667799, scale: 0.8, speedMod: 1.2, points: 50, hullW: 0.8, hullH: 0.4, hullD: 2.0 },
   { name: 'cargo', hullColor: 0x554433, cabinColor: 0x665544, scale: 1.3, speedMod: 0.7, points: 150, hullW: 1.8, hullH: 0.7, hullD: 4.0 },
@@ -100,9 +106,9 @@ export class ShipSystem extends createSystem({}) {
 
   private pickShipType(): number {
     const r = Math.random();
-    if (r < 0.5) return 0;       // 50% fishing
-    if (r < 0.85) return 1;      // 35% cargo
-    return 2;                    // 15% ferry
+    if (r < 0.5) return 0;
+    if (r < 0.85) return 1;
+    return 2;
   }
 
   spawnShip(forceType?: number): ShipData {
@@ -125,7 +131,7 @@ export class ShipSystem extends createSystem({}) {
     cabin.position.set(0, 0.1 + cfg.hullH / 2 + cabinH / 2, -cfg.hullD * 0.1);
     group.add(cabin);
 
-    // Mast (fishing boats have taller mast)
+    // Mast
     const mastMat = new MeshStandardMaterial({ color: 0x888888 });
     const mastH = shipType === 0 ? 2.0 : 1.2;
     const mastGeo = new CylinderGeometry(0.04, 0.04, mastH, 4);
@@ -148,7 +154,7 @@ export class ShipSystem extends createSystem({}) {
       }
     }
 
-    // Ferry windows (ferry only)
+    // Ferry windows
     if (shipType === 2) {
       const windowMat = new MeshBasicMaterial({ color: 0xffdd88 });
       for (let w = 0; w < 4; w++) {
@@ -160,7 +166,6 @@ export class ShipSystem extends createSystem({}) {
           -cfg.hullD * 0.15 + w * 0.25,
         );
         group.add(winMesh);
-
         const winMesh2 = winMesh.clone();
         winMesh2.position.x = -(cfg.hullW * 0.3 + 0.01);
         group.add(winMesh2);
@@ -174,7 +179,6 @@ export class ShipSystem extends createSystem({}) {
       const emergencyGlow = new Mesh(emergencyGlowGeo, emergencyGlowMat);
       emergencyGlow.position.set(0, 0.1 + cfg.hullH + 1.0, 0);
       group.add(emergencyGlow);
-
       const redLight = new PointLight(0xff0000, 2, 8);
       redLight.position.copy(emergencyGlow.position);
       group.add(redLight);
@@ -187,8 +191,6 @@ export class ShipSystem extends createSystem({}) {
       const goldRim = new Mesh(goldRimGeo, goldMat);
       goldRim.position.set(0, 0.1 + cfg.hullH + 0.05, 0);
       group.add(goldRim);
-
-      // Treasure glow
       const treasureLight = new PointLight(0xffaa00, 2, 10);
       treasureLight.position.set(0, 0.5, 0);
       group.add(treasureLight);
@@ -213,12 +215,11 @@ export class ShipSystem extends createSystem({}) {
     starboardLight.position.copy(starLightMesh.position);
     group.add(starboardLight);
 
-    // Illumination glow light (hidden until beam hits ship)
+    // Illumination glow light
     const glowLight = new PointLight(0xffcc44, 0, 8);
     glowLight.position.set(0, 0.5, 0);
     group.add(glowLight);
 
-    // Scale the whole ship
     group.scale.setScalar(cfg.scale);
 
     // Spawn position
@@ -249,6 +250,24 @@ export class ShipSystem extends createSystem({}) {
     const wakePoints = new Points(wakeGeo, wakeMat);
     const wakeEntity = this.world.createTransformEntity(wakePoints);
 
+    // Lantern trail particles (golden glow trail for lit ships)
+    const lanternTrailPositions = new Float32Array(LANTERN_TRAIL_COUNT * 3);
+    for (let i = 0; i < LANTERN_TRAIL_COUNT * 3; i++) {
+      lanternTrailPositions[i] = 0;
+    }
+    const lanternGeo = new BufferGeometry();
+    lanternGeo.setAttribute('position', new BufferAttribute(lanternTrailPositions, 3));
+    const lanternMat = new PointsMaterial({
+      color: 0xffcc44,
+      size: 0.4,
+      transparent: true,
+      opacity: 0,
+      blending: AdditiveBlending,
+      depthWrite: false,
+    });
+    const lanternTrailPoints = new Points(lanternGeo, lanternMat);
+    const lanternTrailEntity = this.world.createTransformEntity(lanternTrailPoints);
+
     const shipData: ShipData = {
       entity,
       group,
@@ -271,6 +290,11 @@ export class ShipSystem extends createSystem({}) {
       glowLight,
       flareTimer: 0,
       nearRockTimer: 0,
+      lanternTrailEntity,
+      lanternTrailPoints,
+      lanternTrailPositions,
+      lanternTrailIdx: 0,
+      hornTimer: (shipType === 1 || shipType === 2) ? (5 + Math.random() * 10) : -1,
     };
 
     this.ships.push(shipData);
@@ -281,6 +305,10 @@ export class ShipSystem extends createSystem({}) {
       this.audioSystem?.playDistressHorn();
     } else if (shipType === 4) {
       this.audioSystem?.playTreasureChime();
+    }
+    // Ship horn for large vessels on spawn
+    if (shipType === 1 || shipType === 2) {
+      this.audioSystem?.playShipHorn();
     }
 
     return shipData;
@@ -315,14 +343,27 @@ export class ShipSystem extends createSystem({}) {
     return [emergency, treasure];
   }
 
+  // Sonar reveal: boost litTimer for all ships within radius
+  sonarReveal(radius: number) {
+    for (const ship of this.ships) {
+      if (ship.docked || ship.sinking) continue;
+      const pos = ship.entity.object3D!.position;
+      const dist = pos.length(); // distance from lighthouse at origin
+      if (dist < radius) {
+        ship.litTimer = Math.max(ship.litTimer, 1.5);
+        ship.isLit = true;
+      }
+    }
+  }
+
   clearAllShips() {
     for (const ship of this.ships) {
       ship.entity.dispose();
       ship.wakeEntity.dispose();
+      ship.lanternTrailEntity.dispose();
     }
     this.ships = [];
 
-    // Clear flares
     for (const flare of this.flarePool) {
       flare.entity.dispose();
     }
@@ -402,6 +443,12 @@ export class ShipSystem extends createSystem({}) {
     const rockPositions = this.envSystem.rockPositions;
     const windStrength = this.envSystem.getWindStrength();
 
+    // Current drift
+    const currentStrength = this.envSystem.getCurrentStrength();
+    const currentAngle = this.envSystem.getCurrentDirAngle();
+    const currentDriftX = Math.cos(currentAngle) * currentStrength;
+    const currentDriftZ = Math.sin(currentAngle) * currentStrength;
+
     for (let i = this.ships.length - 1; i >= 0; i--) {
       const ship = this.ships[i];
       if (ship.docked) continue;
@@ -416,6 +463,7 @@ export class ShipSystem extends createSystem({}) {
         if (ship.sinkProgress >= 1) {
           ship.entity.dispose();
           ship.wakeEntity.dispose();
+          ship.lanternTrailEntity.dispose();
           this.ships.splice(i, 1);
         }
         continue;
@@ -444,7 +492,7 @@ export class ShipSystem extends createSystem({}) {
         ship.litTimer = Math.max(ship.litTimer - delta * 0.5, 0);
       }
 
-      // Illumination glow — ships glow when lit
+      // Illumination glow
       const glowTarget = ship.isLit ? 3.0 : 0;
       ship.glowLight.intensity += (glowTarget - ship.glowLight.intensity) * delta * 5;
 
@@ -467,6 +515,14 @@ export class ShipSystem extends createSystem({}) {
       const moveSpeed = ship.speed * delta;
       pos.x += Math.sin(ship.heading) * moveSpeed;
       pos.z += Math.cos(ship.heading) * moveSpeed;
+
+      // Current drift force
+      if (currentStrength > 0.01) {
+        pos.x += currentDriftX * delta * 2;
+        pos.z += currentDriftZ * delta * 2;
+        // Also slightly push the heading
+        ship.heading += currentStrength * 0.02 * delta * Math.sin(currentAngle - ship.heading);
+      }
 
       // Bob on waves
       pos.y = Math.sin(time * 1.5 + i * 2) * 0.15;
@@ -503,6 +559,31 @@ export class ShipSystem extends createSystem({}) {
         ship.wakePositions[wIdx * 3 + 2] = pos.z - Math.cos(ship.heading) * 1.5;
         ship.wakeIdx++;
         (ship.wakePoints.geometry.getAttribute('position') as BufferAttribute).needsUpdate = true;
+      }
+
+      // Lantern trail — golden glow trail when ship is lit
+      const lanternMat = ship.lanternTrailPoints.material as PointsMaterial;
+      if (ship.isLit || ship.litTimer > 0) {
+        // Add trail point
+        const ltIdx = ship.lanternTrailIdx % LANTERN_TRAIL_COUNT;
+        ship.lanternTrailPositions[ltIdx * 3] = pos.x;
+        ship.lanternTrailPositions[ltIdx * 3 + 1] = 0.2;
+        ship.lanternTrailPositions[ltIdx * 3 + 2] = pos.z;
+        ship.lanternTrailIdx++;
+        (ship.lanternTrailPoints.geometry.getAttribute('position') as BufferAttribute).needsUpdate = true;
+        const targetOpacity = ship.isLit ? 0.35 : Math.max(0, ship.litTimer * 0.15);
+        lanternMat.opacity += (targetOpacity - lanternMat.opacity) * delta * 3;
+      } else {
+        lanternMat.opacity = Math.max(0, lanternMat.opacity - delta * 0.5);
+      }
+
+      // Ship horn for cargo/ferry — periodic deep horn
+      if (ship.hornTimer > 0) {
+        ship.hornTimer -= delta;
+        if (ship.hornTimer <= 0) {
+          this.audioSystem?.playShipHorn();
+          ship.hornTimer = 12 + Math.random() * 15;
+        }
       }
 
       // Distress flares — ships near rocks fire flares
@@ -564,7 +645,7 @@ export class ShipSystem extends createSystem({}) {
         splash.posArr[p * 3] += splash.velArr[p * 3] * delta;
         splash.posArr[p * 3 + 1] += splash.velArr[p * 3 + 1] * delta;
         splash.posArr[p * 3 + 2] += splash.velArr[p * 3 + 2] * delta;
-        splash.velArr[p * 3 + 1] -= 9.8 * delta; // gravity
+        splash.velArr[p * 3 + 1] -= 9.8 * delta;
       }
       (splash.points.geometry.getAttribute('position') as BufferAttribute).needsUpdate = true;
     }
@@ -580,12 +661,11 @@ export class ShipSystem extends createSystem({}) {
       }
       const fMat = flare.points.material as PointsMaterial;
       fMat.opacity = Math.min(flare.life, 1.0) * 0.9;
-      // Drift with gravity and spread
       for (let p = 0; p < FLARE_PARTICLE_COUNT; p++) {
         flare.posArr[p * 3] += flare.velArr[p * 3] * delta;
         flare.posArr[p * 3 + 1] += flare.velArr[p * 3 + 1] * delta;
         flare.posArr[p * 3 + 2] += flare.velArr[p * 3 + 2] * delta;
-        flare.velArr[p * 3 + 1] -= 3.0 * delta; // slow gravity for flares
+        flare.velArr[p * 3 + 1] -= 3.0 * delta;
       }
       (flare.points.geometry.getAttribute('position') as BufferAttribute).needsUpdate = true;
     }

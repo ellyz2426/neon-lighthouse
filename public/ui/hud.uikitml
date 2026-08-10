@@ -97,6 +97,11 @@
     color: #ffcc44;
     text-align: center;
   }
+  .sonar-status {
+    font-size: 9;
+    color: #44ffaa;
+    font-weight: bold;
+  }
 </style>
 <Panel class="root">
   <div class="top-row">
@@ -141,6 +146,7 @@
       </div>
     </div>
     <div class="special-info" id="special-info"></div>
+    <div class="sonar-status" id="sonar-status">SONAR: [F]</div>
     <div class="wave-info" id="wave-start-info"></div>
   </div>
 </Panel>

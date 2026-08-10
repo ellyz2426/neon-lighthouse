@@ -12,6 +12,13 @@ export class AudioSystem extends createSystem({}) {
   private seagullTimer = 5;
   private waveCrashTimer = 3;
 
+  // Ambient drone state
+  private droneOsc1: OscillatorNode | null = null;
+  private droneOsc2: OscillatorNode | null = null;
+  private droneGain: GainNode | null = null;
+  private droneFilter: BiquadFilterNode | null = null;
+  private targetDroneTone = 0; // 0=calm, 1=stormy
+
   init() {
     const initAudio = () => {
       if (this.initialized) return;
@@ -21,6 +28,7 @@ export class AudioSystem extends createSystem({}) {
       this.masterGain.gain.value = 0.4;
       this.masterGain.connect(this.ctx.destination);
       this.startAmbient();
+      this.startDrone();
       document.removeEventListener('click', initAudio);
       document.removeEventListener('pointerdown', initAudio);
     };
@@ -38,6 +46,51 @@ export class AudioSystem extends createSystem({}) {
     this.ambientOsc.connect(this.ambientGain);
     this.ambientGain.connect(this.masterGain);
     this.ambientOsc.start();
+  }
+
+  private startDrone() {
+    if (!this.ctx) return;
+
+    // Two detuned oscillators for rich drone
+    this.droneOsc1 = this.ctx.createOscillator();
+    this.droneOsc2 = this.ctx.createOscillator();
+    this.droneOsc1.type = 'sine';
+    this.droneOsc2.type = 'sine';
+    this.droneOsc1.frequency.value = 55; // A1
+    this.droneOsc2.frequency.value = 55.5; // slightly detuned for chorus
+
+    this.droneFilter = this.ctx.createBiquadFilter();
+    this.droneFilter.type = 'lowpass';
+    this.droneFilter.frequency.value = 200;
+    this.droneFilter.Q.value = 1;
+
+    this.droneGain = this.ctx.createGain();
+    this.droneGain.gain.value = 0.025;
+
+    this.droneOsc1.connect(this.droneFilter);
+    this.droneOsc2.connect(this.droneFilter);
+    this.droneFilter.connect(this.droneGain);
+    this.droneGain.connect(this.masterGain);
+
+    this.droneOsc1.start();
+    this.droneOsc2.start();
+  }
+
+  setDroneTone(storminess: number) {
+    this.targetDroneTone = Math.max(0, Math.min(1, storminess));
+  }
+
+  private updateDrone() {
+    if (!this.ctx || !this.droneOsc1 || !this.droneOsc2 || !this.droneFilter || !this.droneGain) return;
+    const now = this.ctx.currentTime;
+    const s = this.targetDroneTone;
+    // Calm: A1 (55Hz), warm low-pass
+    // Stormy: D2 (73Hz) + detuned, brighter filter, more volume
+    const baseFreq = 55 + s * 18;
+    this.droneOsc1.frequency.linearRampToValueAtTime(baseFreq, now + 3);
+    this.droneOsc2.frequency.linearRampToValueAtTime(baseFreq + 0.5 + s * 2, now + 3);
+    this.droneFilter.frequency.linearRampToValueAtTime(200 + s * 300, now + 3);
+    this.droneGain.gain.linearRampToValueAtTime(0.025 + s * 0.03, now + 3);
   }
 
   toggleVolume() {
@@ -234,7 +287,6 @@ export class AudioSystem extends createSystem({}) {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
 
-    // Low rumbling boom
     const bufferSize = this.ctx.sampleRate * 1.5;
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
     const data = buffer.getChannelData(0);
@@ -257,7 +309,6 @@ export class AudioSystem extends createSystem({}) {
     noise.start(now);
     noise.stop(now + 1.5);
 
-    // Sub-bass
     const osc = this.ctx.createOscillator();
     const subGain = this.ctx.createGain();
     osc.type = 'sine';
@@ -271,12 +322,9 @@ export class AudioSystem extends createSystem({}) {
     osc.stop(now + 1);
   }
 
-  // New sounds
-
   playDistressHorn() {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
-    // Urgent two-tone horn
     for (let rep = 0; rep < 3; rep++) {
       const t = now + rep * 0.4;
       const osc = this.ctx.createOscillator();
@@ -296,7 +344,6 @@ export class AudioSystem extends createSystem({}) {
   playTreasureChime() {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
-    // Magical ascending sparkle
     const notes = [523, 659, 784, 1047, 1319];
     for (let i = 0; i < notes.length; i++) {
       const osc = this.ctx.createOscillator();
@@ -316,7 +363,6 @@ export class AudioSystem extends createSystem({}) {
   playFlareSound() {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
-    // Rising whistle
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
     osc.type = 'sine';
@@ -330,7 +376,6 @@ export class AudioSystem extends createSystem({}) {
     osc.start(now);
     osc.stop(now + 0.5);
 
-    // Pop at the top
     const pop = this.ctx.createOscillator();
     const popGain = this.ctx.createGain();
     pop.type = 'square';
@@ -346,7 +391,6 @@ export class AudioSystem extends createSystem({}) {
   playSeagull() {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
-    // Two-tone seagull cry
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
     osc.type = 'sine';
@@ -369,7 +413,6 @@ export class AudioSystem extends createSystem({}) {
   playWaveCrash() {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
-    // Soft white noise burst for wave breaking
     const bufferSize = Math.floor(this.ctx.sampleRate * 1.5);
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
     const data = buffer.getChannelData(0);
@@ -397,7 +440,6 @@ export class AudioSystem extends createSystem({}) {
   playUpgradeSound() {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
-    // Power-up ascending sweep
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
     osc.type = 'triangle';
@@ -410,7 +452,6 @@ export class AudioSystem extends createSystem({}) {
     osc.start(now);
     osc.stop(now + 0.4);
 
-    // Confirm chime
     const chime = this.ctx.createOscillator();
     const chimeGain = this.ctx.createGain();
     chime.type = 'sine';
@@ -421,6 +462,56 @@ export class AudioSystem extends createSystem({}) {
     chimeGain.connect(this.masterGain);
     chime.start(now + 0.25);
     chime.stop(now + 0.6);
+  }
+
+  // New: deep ship horn for large vessels
+  playShipHorn() {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    // Two detuned sawtooth oscillators for rich resonant horn
+    const osc1 = this.ctx.createOscillator();
+    const osc2 = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc1.type = 'sawtooth';
+    osc2.type = 'sawtooth';
+    osc1.frequency.setValueAtTime(110, now);
+    osc1.frequency.linearRampToValueAtTime(95, now + 1.8);
+    osc2.frequency.setValueAtTime(112, now);
+    osc2.frequency.linearRampToValueAtTime(96, now + 1.8);
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.1, now + 0.4);
+    gain.gain.setValueAtTime(0.1, now + 1.2);
+    gain.gain.linearRampToValueAtTime(0, now + 2.2);
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 280;
+    filter.Q.value = 2;
+    osc1.connect(filter);
+    osc2.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.masterGain);
+    osc1.start(now);
+    osc2.start(now);
+    osc1.stop(now + 2.2);
+    osc2.stop(now + 2.2);
+  }
+
+  // New: sonar ping for fog mechanic
+  playSonarPing() {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    // Classic sonar ping
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(1200, now);
+    osc.frequency.exponentialRampToValueAtTime(600, now + 1.0);
+    gain.gain.setValueAtTime(0.18, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 1.2);
   }
 
   update(delta: number, _time: number) {
@@ -439,5 +530,8 @@ export class AudioSystem extends createSystem({}) {
       this.playWaveCrash();
       this.waveCrashTimer = 5 + Math.random() * 10;
     }
+
+    // Update drone tonality
+    this.updateDrone();
   }
 }
