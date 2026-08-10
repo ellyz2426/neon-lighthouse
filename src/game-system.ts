@@ -86,6 +86,19 @@ export class GameSystem extends createSystem({}) {
   private sonarCooldownMax = 12;
   private lastSonarRadius = 0;
 
+  // Pirate events
+  private pirateTimer = -1;
+  private pirateSpawned = false;
+  private piratesScared = 0;
+
+  // Convoy events
+  private convoyTimer = -1;
+  private convoySpawned = false;
+
+  // Wave timing
+  private waveElapsedTime = 0;
+  private bestSingleDock = 0;
+
   private shipSystem!: ShipSystem;
   private lighthouseSystem!: LighthouseSystem;
   private audioSystem!: AudioSystem;
@@ -211,6 +224,7 @@ export class GameSystem extends createSystem({}) {
       this.comboMultiplier = 1.0 + Math.min(this.combo - 1, 9) * 0.25; // Max 3.5x at 10 combo
       const comboPoints = Math.floor(points * this.comboMultiplier);
       this.score += comboPoints;
+      if (comboPoints > this.bestSingleDock) this.bestSingleDock = comboPoints;
       if (this.combo > this.maxCombo) this.maxCombo = this.combo;
 
       // Show combo notification
@@ -237,6 +251,30 @@ export class GameSystem extends createSystem({}) {
       this.combo = 0;
       this.comboMultiplier = 1.0;
       this.comboDecayTimer = 0;
+    };
+
+    // Pirate raid — steal points from player
+    this.shipSystem.onPirateRaid = (stolenPoints: number) => {
+      if (this.state !== 'playing') return;
+      this.score = Math.max(0, this.score - stolenPoints);
+      this.hudPanel?.getElementById('wave-start-info')?.setProperties({
+        text: `\u2620\uFE0F PIRATE RAID — ${stolenPoints} points stolen!`,
+      });
+      this.showingWaveStart = true;
+      this.waveStartTimer = 3.0;
+    };
+
+    // Pirate scared away by beam — bonus points
+    this.shipSystem.onPirateScared = (_bounty: number) => {
+      if (this.state !== 'playing') return;
+      const bounty = 150;
+      this.score += bounty;
+      this.piratesScared++;
+      this.hudPanel?.getElementById('wave-start-info')?.setProperties({
+        text: `\u2694\uFE0F PIRATE REPELLED — +${bounty} bounty!`,
+      });
+      this.showingWaveStart = true;
+      this.waveStartTimer = 2.5;
     };
   }
 
@@ -345,11 +383,16 @@ export class GameSystem extends createSystem({}) {
     this.waveShipsLost = 0;
     this.emergencySpawned = false;
     this.treasureSpawned = false;
+    this.pirateSpawned = false;
+    this.convoySpawned = false;
+    this.piratesScared = 0;
     this.sonarReady = true;
     this.sonarCooldown = 0;
     this.combo = 0;
     this.comboMultiplier = 1.0;
     this.comboDecayTimer = 0;
+    this.waveElapsedTime = 0;
+    this.bestSingleDock = 0;
     this.shipSystem.clearAllShips();
 
     const config = this.getWaveConfig(this.wave);
@@ -393,6 +436,20 @@ export class GameSystem extends createSystem({}) {
     this.tidalActive = false;
     this.tidalTimer = this.wave >= 4 ? 12 + Math.random() * 20 : -1;
 
+    // Pirate events from wave 5+
+    this.pirateTimer = this.wave >= 5 ? 10 + Math.random() * 15 : -1;
+
+    // Convoy events from wave 3+
+    this.convoyTimer = this.wave >= 3 ? 8 + Math.random() * 12 : -1;
+
+    // Fog banks from wave 4+ (more fog banks in later waves)
+    if (this.wave >= 4) {
+      const fogCount = Math.min(Math.floor((this.wave - 3) * 0.7) + 1, 4);
+      this.envSystem.setFogBanksActive(true, fogCount);
+    } else {
+      this.envSystem.setFogBanksActive(false, 0);
+    }
+
     this.lighthouseSystem.resetEnergy();
     this.lighthouseSystem.setBeamActive(true);
     this.showState('playing');
@@ -406,6 +463,8 @@ export class GameSystem extends createSystem({}) {
     const extras: string[] = [];
     if (config.currentStrength > 0.1) extras.push('\ud83c\udf0a Currents');
     if (config.hasAurora) extras.push('\u2728 Aurora');
+    if (this.wave >= 5) extras.push('\u2620\ufe0f Pirates');
+    if (this.wave >= 4) extras.push('\ud83c\udf2b\ufe0f Fog');
     const extraStr = extras.length > 0 ? ' \u2022 ' + extras.join(' ') : '';
 
     this.hudPanel?.getElementById('wave-start-info')?.setProperties({
@@ -565,6 +624,11 @@ export class GameSystem extends createSystem({}) {
     let sunk = 0;
     let dockedPoints = 0;
     for (const ship of ships) {
+      if (ship.shipType === 5) {
+        // Pirates don't count as regular ships for wave completion
+        if (!ship.pirateScared && !ship.sinking && !ship.pirateRaided) anyActive = true;
+        continue;
+      }
       if (ship.docked) {
         docked++;
         dockedPoints += ship.points;
@@ -584,8 +648,9 @@ export class GameSystem extends createSystem({}) {
     this.waveShipsLost = this.waveShipTotal - docked;
 
     const perfectBonus = this.waveShipsLost === 0 ? 500 : 0;
+    const pirateBonus = this.piratesScared * 50;
     // Docking points are now added per-ship via combo callback
-    this.score += perfectBonus;
+    this.score += perfectBonus + pirateBonus;
     this.totalShipsSaved += docked;
 
     this.lives -= this.waveShipsLost;
@@ -595,6 +660,7 @@ export class GameSystem extends createSystem({}) {
     this.envSystem.setWindStrength(0);
     this.envSystem.setCurrentStrength(0);
     this.envSystem.setAuroraActive(false);
+    this.envSystem.setFogBanksActive(false, 0);
     this.tidalActive = false;
     this.shipSystem.setTidalForce(0, 0);
     // Transition to dawn between waves
@@ -611,13 +677,30 @@ export class GameSystem extends createSystem({}) {
     const starStr = Array(stars).fill('\u2605').join(' ') +
       (stars < 3 ? ' ' + Array(3 - stars).fill('\u2606').join(' ') : '');
 
+    // Calculate accuracy
+    const totalAttempted = docked + this.waveShipsLost;
+    const accuracy = totalAttempted > 0 ? Math.round((docked / totalAttempted) * 100) : 0;
+
+    // Format elapsed time
+    const mins = Math.floor(this.waveElapsedTime / 60);
+    const secs = Math.floor(this.waveElapsedTime % 60);
+    const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+
     this.waveCompletePanel?.getElementById('wave-num')?.setProperties({ text: `Wave ${this.wave}` });
     this.waveCompletePanel?.getElementById('ships-saved')?.setProperties({ text: String(docked) });
     this.waveCompletePanel?.getElementById('ships-lost')?.setProperties({ text: String(this.waveShipsLost) });
-    this.waveCompletePanel?.getElementById('bonus')?.setProperties({ text: `+${perfectBonus}` });
+    this.waveCompletePanel?.getElementById('bonus')?.setProperties({ text: `+${perfectBonus + pirateBonus}` });
     this.waveCompletePanel?.getElementById('stars')?.setProperties({ text: starStr });
+
+    // Enhanced stats
+    const statsLines: string[] = [];
+    if (this.maxCombo >= 2) statsLines.push(`Combo: x${this.maxCombo}`);
+    statsLines.push(`${accuracy}% Accuracy`);
+    statsLines.push(timeStr);
+    if (this.bestSingleDock > 0) statsLines.push(`Best: ${this.bestSingleDock}pts`);
+    if (this.piratesScared > 0) statsLines.push(`\u2620\uFE0F${this.piratesScared}`);
     this.waveCompletePanel?.getElementById('max-combo')?.setProperties({
-      text: this.maxCombo >= 2 ? `Best Combo: x${this.maxCombo}` : '',
+      text: statsLines.join(' \u2022 '),
     });
 
     // Keeper's log entry
@@ -634,6 +717,7 @@ export class GameSystem extends createSystem({}) {
     this.envSystem.setWindStrength(0);
     this.envSystem.setCurrentStrength(0);
     this.envSystem.setAuroraActive(false);
+    this.envSystem.setFogBanksActive(false, 0);
     this.tidalActive = false;
     this.shipSystem.setTidalForce(0, 0);
     this.audioSystem.setDroneTone(0);
@@ -768,6 +852,45 @@ export class GameSystem extends createSystem({}) {
           this.showingWaveStart = true;
           this.waveStartTimer = 3.0;
         }
+      }
+
+      // Pirate ship event (wave 5+)
+      if (!this.pirateSpawned && this.pirateTimer > 0) {
+        this.pirateTimer -= delta;
+        if (this.pirateTimer <= 0) {
+          this.shipSystem.spawnShip(5);
+          this.pirateSpawned = true;
+          this.hudPanel?.getElementById('wave-start-info')?.setProperties({
+            text: '\u2620\uFE0F PIRATE SHIP approaching! Shine the beam to repel!',
+          });
+          this.showingWaveStart = true;
+          this.waveStartTimer = 3.0;
+        }
+      }
+
+      // Convoy event (wave 3+)
+      if (!this.convoySpawned && this.convoyTimer > 0) {
+        this.convoyTimer -= delta;
+        if (this.convoyTimer <= 0) {
+          const convoy = this.shipSystem.spawnConvoy();
+          this.convoySpawned = true;
+          this.hudPanel?.getElementById('wave-start-info')?.setProperties({
+            text: `\u26F5 CONVOY SPOTTED — ${convoy.length} ships in formation!`,
+          });
+          this.showingWaveStart = true;
+          this.waveStartTimer = 3.0;
+        }
+      }
+
+      // Track wave elapsed time
+      this.waveElapsedTime += delta;
+
+      // Pirate HUD indicator
+      const pirateCount = this.shipSystem.getPirateCount();
+      if (pirateCount > 0) {
+        this.hudPanel?.getElementById('special-info')?.setProperties({
+          text: `\u2620\uFE0F${pirateCount}`,
+        });
       }
     }
   }

@@ -147,6 +147,19 @@ export class EnvironmentSystem extends createSystem({}) {
   private whaleAngle = 0;
   private whaleDistance = 0;
 
+  // Fog banks
+  private fogBankMeshes: Mesh[] = [];
+  private fogBankEntities: { obj: ReturnType<EnvironmentSystem['world']['createTransformEntity']> }[] = [];
+  private fogBankAngles: number[] = [];
+  private fogBankSpeeds: number[] = [];
+  private fogBankDistances: number[] = [];
+  private fogBanksActive = false;
+  private fogBankCount = 0;
+
+  // Lighthouse gallery windows
+  private galleryWindowMeshes: Mesh[] = [];
+  private weathervaneMesh!: Mesh;
+
   init() {
     this.buildOcean();
     this.buildLighthouse();
@@ -165,6 +178,8 @@ export class EnvironmentSystem extends createSystem({}) {
     this.buildShootingStar();
     this.buildBeamDust();
     this.buildWhale();
+    this.buildFogBanks();
+    this.buildLighthouseDetails();
   }
 
   private buildOcean() {
@@ -860,6 +875,131 @@ export class EnvironmentSystem extends createSystem({}) {
     entity.object3D!.position.set(0, -10, 0);
   }
 
+  private buildFogBanks() {
+    // Create 4 fog bank meshes (large semi-transparent discs that drift across the ocean)
+    const maxBanks = 4;
+    for (let i = 0; i < maxBanks; i++) {
+      const radius = 12 + Math.random() * 8;
+      const fogGeo = new CylinderGeometry(radius, radius, 3, 12, 1, true);
+      const fogMat = new MeshBasicMaterial({
+        color: 0x889999,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        side: DoubleSide,
+      });
+      const fogMesh = new Mesh(fogGeo, fogMat);
+      const angle = (Math.PI * 2 / maxBanks) * i + Math.random();
+      const dist = 20 + Math.random() * 25;
+      const fogEntity = this.world.createTransformEntity(fogMesh);
+      fogEntity.object3D!.position.set(
+        Math.cos(angle) * dist,
+        0.5,
+        Math.sin(angle) * dist,
+      );
+
+      this.fogBankMeshes.push(fogMesh);
+      this.fogBankEntities.push({ obj: fogEntity });
+      this.fogBankAngles.push(angle);
+      this.fogBankSpeeds.push(0.1 + Math.random() * 0.15);
+      this.fogBankDistances.push(dist);
+    }
+  }
+
+  private buildLighthouseDetails() {
+    // Gallery windows around the lantern room
+    const windowCount = 8;
+    const windowMat = new MeshBasicMaterial({
+      color: 0xffdd66,
+      transparent: true,
+      opacity: 0.6,
+    });
+    for (let i = 0; i < windowCount; i++) {
+      const windowGeo = new BoxGeometry(0.3, 0.5, 0.05);
+      const windowMesh = new Mesh(windowGeo, windowMat);
+      const angle = (Math.PI * 2 / windowCount) * i;
+      const radius = 0.85;
+      windowMesh.position.set(
+        Math.cos(angle) * radius,
+        LIGHTHOUSE_HEIGHT + 0.5,
+        Math.sin(angle) * radius,
+      );
+      windowMesh.lookAt(0, LIGHTHOUSE_HEIGHT + 0.5, 0);
+      this.lighthouseGroup.add(windowMesh);
+      this.galleryWindowMeshes.push(windowMesh);
+    }
+
+    // Gallery railing (thin torus around the lantern room base)
+    const railingMat = new MeshStandardMaterial({ color: 0x444444, roughness: 0.5 });
+    const railingGeo = new TorusGeometry(1.1, 0.03, 6, 16);
+    const railing = new Mesh(railingGeo, railingMat);
+    railing.position.set(0, LIGHTHOUSE_HEIGHT - 0.1, 0);
+    railing.rotation.x = Math.PI / 2;
+    this.lighthouseGroup.add(railing);
+
+    // Gallery floor (walkway)
+    const walkwayMat = new MeshStandardMaterial({ color: 0x555555, roughness: 0.8 });
+    const walkwayGeo = new RingGeometry(0.8, 1.15, 16);
+    const walkway = new Mesh(walkwayGeo, walkwayMat);
+    walkway.position.set(0, LIGHTHOUSE_HEIGHT - 0.15, 0);
+    walkway.rotation.x = -Math.PI / 2;
+    this.lighthouseGroup.add(walkway);
+
+    // Weathervane on top
+    const vaneMat = new MeshStandardMaterial({ color: 0x888888, roughness: 0.4 });
+    const vanePostGeo = new CylinderGeometry(0.02, 0.02, 1.5, 4);
+    const vanePost = new Mesh(vanePostGeo, vaneMat);
+    vanePost.position.set(0, LIGHTHOUSE_HEIGHT + 2.0, 0);
+    this.lighthouseGroup.add(vanePost);
+
+    // Arrow part of weathervane
+    const arrowMat = new MeshStandardMaterial({ color: 0xcc8833, roughness: 0.5 });
+    const arrowGeo = new ConeGeometry(0.1, 0.6, 4);
+    this.weathervaneMesh = new Mesh(arrowGeo, arrowMat);
+    this.weathervaneMesh.position.set(0, LIGHTHOUSE_HEIGHT + 2.7, 0);
+    this.weathervaneMesh.rotation.z = Math.PI / 2;
+    this.lighthouseGroup.add(this.weathervaneMesh);
+
+    // Railing posts (vertical bars)
+    const postMat = new MeshStandardMaterial({ color: 0x444444 });
+    const postGeo = new CylinderGeometry(0.015, 0.015, 0.4, 4);
+    for (let i = 0; i < 12; i++) {
+      const angle = (Math.PI * 2 / 12) * i;
+      const post = new Mesh(postGeo, postMat);
+      post.position.set(
+        Math.cos(angle) * 1.1,
+        LIGHTHOUSE_HEIGHT + 0.1,
+        Math.sin(angle) * 1.1,
+      );
+      this.lighthouseGroup.add(post);
+    }
+
+    // Upper railing
+    const upperRailGeo = new TorusGeometry(1.1, 0.02, 6, 16);
+    const upperRail = new Mesh(upperRailGeo, railingMat);
+    upperRail.position.set(0, LIGHTHOUSE_HEIGHT + 0.3, 0);
+    upperRail.rotation.x = Math.PI / 2;
+    this.lighthouseGroup.add(upperRail);
+  }
+
+  // Fog bank controls
+  setFogBanksActive(active: boolean, count: number) {
+    this.fogBanksActive = active;
+    this.fogBankCount = Math.min(count, this.fogBankMeshes.length);
+  }
+
+  getFogBankPositions(): Vector3[] {
+    const positions: Vector3[] = [];
+    if (!this.fogBanksActive) return positions;
+    for (let i = 0; i < this.fogBankCount; i++) {
+      const e = this.fogBankEntities[i].obj;
+      if (e.object3D) {
+        positions.push(e.object3D.position);
+      }
+    }
+    return positions;
+  }
+
   // --- Setters ---
 
   setFogDensity(density: number) {
@@ -1186,6 +1326,42 @@ export class EnvironmentSystem extends createSystem({}) {
     // Specular strength from day phase (more at night when moon is visible)
     const nightSpecular = 0.3 * (1 - Math.max(0, Math.sin(this.dayPhase * Math.PI)));
     (this.oceanMesh.material as ShaderMaterial).uniforms.uSpecularStrength.value = nightSpecular;
+
+    // Fog bank animation
+    for (let i = 0; i < this.fogBankMeshes.length; i++) {
+      const fogMesh = this.fogBankMeshes[i];
+      const fogMat = fogMesh.material as MeshBasicMaterial;
+      if (i < this.fogBankCount && this.fogBanksActive) {
+        // Drift fog banks across the ocean
+        this.fogBankAngles[i] += this.fogBankSpeeds[i] * delta;
+        const dist = this.fogBankDistances[i];
+        const ang = this.fogBankAngles[i];
+        const e = this.fogBankEntities[i].obj;
+        if (e.object3D) {
+          e.object3D.position.x = Math.cos(ang) * dist;
+          e.object3D.position.z = Math.sin(ang) * dist;
+        }
+        // Breathing opacity effect
+        const breathe = 0.25 + Math.sin(time * 0.5 + i * 1.7) * 0.1;
+        fogMat.opacity += (breathe - fogMat.opacity) * delta * 2;
+      } else {
+        fogMat.opacity = Math.max(0, fogMat.opacity - delta * 0.5);
+      }
+    }
+
+    // Weathervane rotation — points into wind direction
+    if (this.weathervaneMesh) {
+      const windAngle = time * 0.3 + this.windStrength * time * 0.2;
+      this.weathervaneMesh.rotation.y = windAngle;
+    }
+
+    // Gallery window pulse — warm glow that shifts with beam activity
+    for (let i = 0; i < this.galleryWindowMeshes.length; i++) {
+      const wm = this.galleryWindowMeshes[i];
+      const wMat = wm.material as MeshBasicMaterial;
+      const pulse = 0.4 + Math.sin(time * 2 + i * 0.5) * 0.2;
+      wMat.opacity = pulse;
+    }
 
     // Whale sighting events
     this.updateWhale(delta, time);

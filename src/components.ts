@@ -40,6 +40,13 @@ export const Flare = createComponent('Flare', {
   speed: { type: Types.Float32, default: 8.0 },
 });
 
+export const FogBank = createComponent('FogBank', {
+  radius: { type: Types.Float32, default: 15 },
+  driftSpeed: { type: Types.Float32, default: 0.3 },
+  driftAngle: { type: Types.Float32, default: 0 },
+  opacity: { type: Types.Float32, default: 0.6 },
+});
+
 export default defineComponents([
   Ship,
   Rock,
@@ -48,4 +55,5 @@ export default defineComponents([
   StarField,
   OceanTile,
   Flare,
+  FogBank,
 ]);

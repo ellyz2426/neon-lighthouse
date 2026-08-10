@@ -14,13 +14,15 @@ import {
   Points,
   PointsMaterial,
   AdditiveBlending,
+  PlaneGeometry,
+  DoubleSide,
 } from '@iwsdk/core';
 import { Ship } from './components.js';
 import { LighthouseSystem } from './lighthouse-system.js';
 import { EnvironmentSystem } from './environment-system.js';
 import { AudioSystem } from './audio-system.js';
 
-// Ship types: 0=fishing, 1=cargo, 2=ferry, 3=emergency, 4=treasure
+// Ship types: 0=fishing, 1=cargo, 2=ferry, 3=emergency, 4=treasure, 5=pirate
 export interface ShipData {
   entity: ReturnType<typeof createSystem.prototype.world.createTransformEntity>;
   group: Group;
@@ -50,6 +52,13 @@ export interface ShipData {
   lanternTrailIdx: number;
   // Ship horn state
   hornTimer: number;
+  // Pirate state
+  pirateScared: boolean;
+  pirateScareTimer: number;
+  pirateRaided: boolean;
+  // Convoy state
+  convoyLeader: ShipData | null;
+  convoyOffset: number;
 }
 
 interface FlareData {
@@ -75,6 +84,7 @@ const SHIP_CONFIGS = [
   { name: 'ferry', hullColor: 0xccccdd, cabinColor: 0xddddee, scale: 1.1, speedMod: 0.9, points: 200, hullW: 1.4, hullH: 0.5, hullD: 3.2 },
   { name: 'emergency', hullColor: 0xcc2222, cabinColor: 0xff4444, scale: 0.9, speedMod: 1.5, points: 300, hullW: 1.0, hullH: 0.4, hullD: 2.5 },
   { name: 'treasure', hullColor: 0xaa8822, cabinColor: 0xffcc44, scale: 1.2, speedMod: 0.5, points: 500, hullW: 1.6, hullH: 0.6, hullD: 3.5 },
+  { name: 'pirate', hullColor: 0x221111, cabinColor: 0x332222, scale: 1.15, speedMod: 1.1, points: -200, hullW: 1.5, hullH: 0.55, hullD: 3.4 },
 ];
 
 // SOS morse code pattern: returns true when light should be ON
@@ -123,6 +133,8 @@ export class ShipSystem extends createSystem({}) {
   // Event callbacks
   public onShipDocked: ((shipType: number, points: number) => void) | null = null;
   public onShipCrashed: ((shipType: number) => void) | null = null;
+  public onPirateRaid: ((stolenPoints: number) => void) | null = null;
+  public onPirateScared: ((bounty: number) => void) | null = null;
 
   // Splash particle pool
   private splashPool: { entity: ReturnType<typeof createSystem.prototype.world.createTransformEntity>; points: Points; life: number; posArr: Float32Array; velArr: Float32Array }[] = [];
@@ -237,6 +249,47 @@ export class ShipSystem extends createSystem({}) {
       group.add(treasureLight);
     }
 
+    // Pirate ship: dark sails, skull emblem, red lanterns
+    if (shipType === 5) {
+      // Dark tattered sail
+      const sailMat = new MeshStandardMaterial({ color: 0x111111, roughness: 0.9, side: DoubleSide });
+      const sailGeo = new PlaneGeometry(cfg.hullW * 1.2, 2.0);
+      const sail = new Mesh(sailGeo, sailMat);
+      sail.position.set(0, 0.1 + cfg.hullH + 1.5, cfg.hullD * 0.15);
+      group.add(sail);
+      // Skull emblem (small white sphere on sail)
+      const skullMat = new MeshBasicMaterial({ color: 0xeeeeee });
+      const skullGeo = new SphereGeometry(0.15, 6, 6);
+      const skull = new Mesh(skullGeo, skullMat);
+      skull.position.set(0, 0.1 + cfg.hullH + 1.5, cfg.hullD * 0.15 + 0.02);
+      group.add(skull);
+      // Cross bones (two thin cylinders)
+      const boneMat = new MeshBasicMaterial({ color: 0xcccccc });
+      const boneGeo = new CylinderGeometry(0.02, 0.02, 0.4, 4);
+      const bone1 = new Mesh(boneGeo, boneMat);
+      bone1.position.copy(skull.position);
+      bone1.position.y -= 0.2;
+      bone1.rotation.z = Math.PI / 4;
+      group.add(bone1);
+      const bone2 = new Mesh(boneGeo, boneMat);
+      bone2.position.copy(skull.position);
+      bone2.position.y -= 0.2;
+      bone2.rotation.z = -Math.PI / 4;
+      group.add(bone2);
+      // Red menacing lanterns
+      const pirateLanternMat = new MeshBasicMaterial({ color: 0xff2200 });
+      const pirateLanternGeo = new SphereGeometry(0.1, 6, 6);
+      const pLantern1 = new Mesh(pirateLanternGeo, pirateLanternMat);
+      pLantern1.position.set(-cfg.hullW * 0.4, 0.1 + cfg.hullH + 0.3, cfg.hullD * 0.4);
+      group.add(pLantern1);
+      const pLantern2 = pLantern1.clone();
+      pLantern2.position.x = cfg.hullW * 0.4;
+      group.add(pLantern2);
+      const pirateGlow = new PointLight(0xff2200, 2, 8);
+      pirateGlow.position.set(0, 0.5, 0);
+      group.add(pirateGlow);
+    }
+
     // Navigation lights
     const portLightGeo = new SphereGeometry(0.08, 6, 6);
     const portLightMat = new MeshBasicMaterial({ color: 0xff2222 });
@@ -336,6 +389,11 @@ export class ShipSystem extends createSystem({}) {
       lanternTrailPositions,
       lanternTrailIdx: 0,
       hornTimer: (shipType === 1 || shipType === 2) ? (5 + Math.random() * 10) : -1,
+      pirateScared: false,
+      pirateScareTimer: 0,
+      pirateRaided: false,
+      convoyLeader: null,
+      convoyOffset: 0,
     };
 
     this.ships.push(shipData);
@@ -419,6 +477,39 @@ export class ShipSystem extends createSystem({}) {
   setTidalForce(x: number, z: number) {
     this.tidalForceX = x;
     this.tidalForceZ = z;
+  }
+
+  // Spawn a convoy: a leader ship followed by 1-2 followers in formation
+  spawnConvoy(): ShipData[] {
+    const leader = this.spawnShip(1); // cargo leader
+    const convoy: ShipData[] = [leader];
+    const followerCount = 1 + Math.floor(Math.random() * 2); // 1-2 followers
+    for (let f = 0; f < followerCount; f++) {
+      const followerType = Math.random() < 0.5 ? 0 : 2; // fishing or ferry
+      const follower = this.spawnShip(followerType);
+      // Position follower behind leader
+      const offset = 6 + f * 5;
+      const leaderPos = leader.entity.object3D!.position;
+      follower.entity.object3D!.position.set(
+        leaderPos.x - Math.sin(leader.heading) * offset + (Math.random() - 0.5) * 3,
+        0,
+        leaderPos.z - Math.cos(leader.heading) * offset + (Math.random() - 0.5) * 3,
+      );
+      follower.heading = leader.heading;
+      follower.convoyLeader = leader;
+      follower.convoyOffset = offset;
+      convoy.push(follower);
+    }
+    return convoy;
+  }
+
+  // Get pirate ship count
+  getPirateCount(): number {
+    let count = 0;
+    for (const s of this.ships) {
+      if (s.shipType === 5 && !s.docked && !s.sinking && !s.pirateScared) count++;
+    }
+    return count;
   }
 
   private spawnSplash(position: Vector3) {
@@ -578,7 +669,63 @@ export class ShipSystem extends createSystem({}) {
       ship.glowLight.intensity += (glowTarget - ship.glowLight.intensity) * delta * 5;
 
       // Navigation
-      if (ship.litTimer > 0.3) {
+      if (ship.shipType === 5) {
+        // Pirate behavior: always heads toward harbor unless scared by beam
+        if (ship.pirateScared) {
+          ship.pirateScareTimer -= delta;
+          if (ship.pirateScareTimer <= 0) {
+            // Pirate flees outward after being scared
+            ship.sinking = true; // disappears
+            this.onPirateScared?.(ship.points);
+            continue;
+          }
+          // Flee away from lighthouse
+          const fleeDir = this.tempVec.copy(pos).normalize();
+          const fleeHeading = Math.atan2(fleeDir.x, fleeDir.z);
+          let fleeDiff = fleeHeading - ship.heading;
+          while (fleeDiff > Math.PI) fleeDiff -= Math.PI * 2;
+          while (fleeDiff < -Math.PI) fleeDiff += Math.PI * 2;
+          ship.heading += fleeDiff * delta * 4;
+          // Speed boost while fleeing
+          pos.x += Math.sin(ship.heading) * ship.speed * 2.5 * delta;
+          pos.z += Math.cos(ship.heading) * ship.speed * 2.5 * delta;
+        } else {
+          // Beam scares pirates — if lit, trigger scare
+          if (ship.isLit && ship.litTimer > 0.5) {
+            ship.pirateScared = true;
+            ship.pirateScareTimer = 3.0;
+            this.audioSystem?.playDistressHorn();
+          }
+          // Head straight to harbor (pirates know the way)
+          const toHarbor = this.tempVec.copy(HARBOR_POS).sub(pos).normalize();
+          const targetHeading = Math.atan2(toHarbor.x, toHarbor.z);
+          let angleDiff = targetHeading - ship.heading;
+          while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+          while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+          ship.heading += angleDiff * delta * 3;
+        }
+      } else if (ship.convoyLeader && !ship.convoyLeader.docked && !ship.convoyLeader.sinking) {
+        // Convoy follower: track behind leader
+        const leaderPos = ship.convoyLeader.entity.object3D!.position;
+        const behindX = leaderPos.x - Math.sin(ship.convoyLeader.heading) * ship.convoyOffset;
+        const behindZ = leaderPos.z - Math.cos(ship.convoyLeader.heading) * ship.convoyOffset;
+        this.tempVec.set(behindX, 0, behindZ);
+        const toFollow = this.tempVec.sub(pos).normalize();
+        const followHeading = Math.atan2(toFollow.x, toFollow.z);
+        let followDiff = followHeading - ship.heading;
+        while (followDiff > Math.PI) followDiff -= Math.PI * 2;
+        while (followDiff < -Math.PI) followDiff += Math.PI * 2;
+        ship.heading += followDiff * delta * 2.5;
+        // Also steer toward harbor when lit (convoy members are still guided by beam)
+        if (ship.litTimer > 0.3) {
+          const toHarbor = this.tempVec.copy(HARBOR_POS).sub(pos).normalize();
+          const harborHeading = Math.atan2(toHarbor.x, toHarbor.z);
+          let hDiff = harborHeading - ship.heading;
+          while (hDiff > Math.PI) hDiff -= Math.PI * 2;
+          while (hDiff < -Math.PI) hDiff += Math.PI * 2;
+          ship.heading += hDiff * delta * 1.0;
+        }
+      } else if (ship.litTimer > 0.3) {
         const toHarbor = this.tempVec.copy(HARBOR_POS).sub(pos).normalize();
         const targetHeading = Math.atan2(toHarbor.x, toHarbor.z);
         let angleDiff = targetHeading - ship.heading;
@@ -673,6 +820,19 @@ export class ShipSystem extends createSystem({}) {
         ship.glowLight.intensity = 1.5 + Math.sin(time * 2) * 0.5;
       }
 
+      // Pirate ship: menacing red pulse, faster when approaching harbor
+      if (ship.shipType === 5 && !ship.pirateScared) {
+        const harbDist = pos.distanceTo(HARBOR_POS);
+        const urgency = Math.max(0.5, 1 - harbDist / SPAWN_DISTANCE) * 8;
+        const flash = Math.sin(time * urgency) > 0 ? 3.0 : 0.8;
+        ship.portLight.intensity = flash;
+        ship.starboardLight.intensity = flash;
+        ship.portLight.color.setHex(0xff2200);
+        ship.starboardLight.color.setHex(0xff2200);
+        ship.glowLight.color.setHex(0xff2200);
+        ship.glowLight.intensity = 1.0 + Math.sin(time * 3) * 0.5;
+      }
+
       // Update wake trail
       if (!ship.docked && !ship.sinking) {
         const wIdx = ship.wakeIdx % WAKE_PARTICLE_COUNT;
@@ -724,6 +884,16 @@ export class ShipSystem extends createSystem({}) {
       // Check harbor dock
       const distToHarbor = pos.distanceTo(HARBOR_POS);
       if (distToHarbor < DOCK_RADIUS) {
+        if (ship.shipType === 5 && !ship.pirateRaided) {
+          // Pirate raids the harbor — steal points, then flee
+          ship.pirateRaided = true;
+          ship.pirateScared = true;
+          ship.pirateScareTimer = 3.0;
+          this.spawnSplash(pos.clone());
+          this.audioSystem?.playDistressHorn();
+          this.onPirateRaid?.(Math.abs(ship.points));
+          continue;
+        }
         ship.docked = true;
         this.spawnSplash(pos.clone());
         this.spawnDockCelebration(pos.clone());
