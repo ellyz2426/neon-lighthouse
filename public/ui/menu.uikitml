@@ -1,0 +1,73 @@
+<!-- menu.uikitml -->
+<style>
+  .root {
+    flex-direction: column;
+    align-items: center;
+    padding: 24;
+    gap: 16;
+    background-color: rgba(2, 8, 24, 0.94);
+    border-radius: 16;
+    border-color: rgba(255, 180, 50, 0.4);
+    border-width: 2;
+    width: 320;
+  }
+  .title {
+    font-size: 32;
+    color: #ffb432;
+    font-weight: bold;
+  }
+  .subtitle {
+    font-size: 14;
+    color: rgba(180, 200, 220, 0.8);
+  }
+  .btn {
+    padding: 12;
+    background-color: rgba(255, 180, 50, 0.15);
+    border-radius: 8;
+    border-color: rgba(255, 180, 50, 0.3);
+    border-width: 1;
+    width: 260;
+    align-items: center;
+    cursor: pointer;
+  }
+  .btn-text {
+    font-size: 18;
+    color: #ffffff;
+    font-weight: bold;
+  }
+  .score-row {
+    flex-direction: row;
+    justify-content: space-between;
+    width: 260;
+    padding-top: 8;
+  }
+  .score-label {
+    font-size: 13;
+    color: rgba(180, 200, 220, 0.6);
+  }
+  .score-value {
+    font-size: 13;
+    color: #ffb432;
+  }
+</style>
+<Panel class="root">
+  <div class="title" id="title">NEON LIGHTHOUSE</div>
+  <div class="subtitle">Guide ships through the dark</div>
+  <div class="btn" id="btn-play">
+    <div class="btn-text">PLAY</div>
+  </div>
+  <div class="btn" id="btn-tutorial">
+    <div class="btn-text">HOW TO PLAY</div>
+  </div>
+  <div class="btn" id="btn-settings">
+    <div class="btn-text">SETTINGS</div>
+  </div>
+  <div class="score-row">
+    <div class="score-label">HIGH SCORE</div>
+    <div class="score-value" id="high-score">0</div>
+  </div>
+  <div class="score-row">
+    <div class="score-label">BEST WAVE</div>
+    <div class="score-value" id="best-wave">0</div>
+  </div>
+</Panel>

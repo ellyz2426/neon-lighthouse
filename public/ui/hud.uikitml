@@ -1,0 +1,76 @@
+<!-- hud.uikitml -->
+<style>
+  .root {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10;
+    gap: 14;
+    background-color: rgba(2, 8, 24, 0.85);
+    border-radius: 10;
+    border-color: rgba(255, 180, 50, 0.3);
+    border-width: 1;
+    width: 480;
+    height: 60;
+  }
+  .stat-group {
+    flex-direction: column;
+    align-items: center;
+    gap: 2;
+  }
+  .stat-label {
+    font-size: 9;
+    color: rgba(180, 200, 220, 0.6);
+  }
+  .stat-value {
+    font-size: 16;
+    color: #ffffff;
+    font-weight: bold;
+  }
+  .score-value {
+    font-size: 18;
+    color: #ffb432;
+    font-weight: bold;
+  }
+  .lives-value {
+    font-size: 16;
+    color: #44ddff;
+    font-weight: bold;
+  }
+  .beam-value {
+    font-size: 16;
+    color: #88ff66;
+    font-weight: bold;
+  }
+  .divider {
+    width: 1;
+    height: 36;
+    background-color: rgba(255, 180, 50, 0.2);
+  }
+</style>
+<Panel class="root">
+  <div class="stat-group">
+    <div class="stat-label">SCORE</div>
+    <div class="score-value" id="score">0</div>
+  </div>
+  <div class="divider"></div>
+  <div class="stat-group">
+    <div class="stat-label">LIVES</div>
+    <div class="lives-value" id="lives">3</div>
+  </div>
+  <div class="divider"></div>
+  <div class="stat-group">
+    <div class="stat-label">WAVE</div>
+    <div class="stat-value" id="wave">1</div>
+  </div>
+  <div class="divider"></div>
+  <div class="stat-group">
+    <div class="stat-label">SHIPS</div>
+    <div class="stat-value" id="ships-remaining">0</div>
+  </div>
+  <div class="divider"></div>
+  <div class="stat-group">
+    <div class="stat-label">BEAM</div>
+    <div class="beam-value" id="beam-power">ON</div>
+  </div>
+</Panel>
