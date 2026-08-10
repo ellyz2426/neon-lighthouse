@@ -13,6 +13,7 @@ import {
   SphereGeometry,
   PointLight,
 } from '@iwsdk/core';
+import { EnvironmentSystem } from './environment-system.js';
 
 const BEAM_LENGTH = 60;
 const BEAM_RADIUS = 4;
@@ -30,6 +31,9 @@ export class LighthouseSystem extends createSystem({}) {
   // Mouse aim for browser mode
   private mouseNDC = new Vector2(0, 0);
   private mouseDown = false;
+
+  // Environment system ref for beam dust
+  private envSystem!: EnvironmentSystem;
 
   // Beam energy system
   private beamEnergy = 100;
@@ -102,6 +106,7 @@ export class LighthouseSystem extends createSystem({}) {
   }
 
   init() {
+    this.envSystem = this.world.getSystem(EnvironmentSystem)!;
     this.buildBeam();
     this.setupMouseControls();
   }
@@ -181,6 +186,9 @@ export class LighthouseSystem extends createSystem({}) {
     this.handleXRInput();
     this.handleBrowserInput();
     this.updateBeamVisuals(time);
+    // Update beam dust motes in environment system
+    const effectiveActive = this.beamActive && !this.beamOverheated;
+    this.envSystem.updateBeamDust(BEAM_ORIGIN, this.beamDirection, effectiveActive, delta);
   }
 
   private updateBeamEnergy(delta: number) {

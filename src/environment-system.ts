@@ -37,6 +37,9 @@ const RAIN_COUNT = 2000;
 const NUM_BUOYS = 6;
 const CURRENT_ARROW_COUNT = 10;
 const SONAR_MAX_RADIUS = 60;
+const SHOOTING_STAR_INTERVAL_MIN = 12;
+const SHOOTING_STAR_INTERVAL_MAX = 35;
+const BEAM_DUST_COUNT = 60;
 
 export class EnvironmentSystem extends createSystem({}) {
   private oceanMesh!: Mesh;
@@ -112,6 +115,24 @@ export class EnvironmentSystem extends createSystem({}) {
   private fogOverrideTimer = 0;
   private savedFogDensity = 0;
 
+  // Shooting stars
+  private shootingStarTimer = 8;
+  private shootingStarMesh!: Mesh;
+  private shootingStarTrail!: Mesh;
+  private shootingStarActive = false;
+  private shootingStarProgress = 0;
+  private shootingStarStart = new Vector3();
+  private shootingStarEnd = new Vector3();
+  private shootingStarDuration = 0;
+
+  // Beam dust motes
+  private beamDustPoints!: Points;
+  private beamDustPositions!: Float32Array;
+  private beamDustVelocities!: Float32Array;
+
+  // Rock moss meshes (for animated glow)
+  private rockMossGlows: Mesh[] = [];
+
   init() {
     this.buildOcean();
     this.buildLighthouse();
@@ -127,6 +148,8 @@ export class EnvironmentSystem extends createSystem({}) {
     this.buildAurora();
     this.buildCurrentArrows();
     this.buildSonarRing();
+    this.buildShootingStar();
+    this.buildBeamDust();
   }
 
   private buildOcean() {
@@ -140,12 +163,16 @@ export class EnvironmentSystem extends createSystem({}) {
         uFoamColor: { value: new Color(0x00ffcc) },
         uWindStrength: { value: 0 },
         uCausticIntensity: { value: 0.25 },
+        uMoonDir: { value: new Vector3(0.4, 0.5, -0.6).normalize() },
+        uSpecularStrength: { value: 0.3 },
       },
       vertexShader: `
         uniform float uTime;
         uniform float uWindStrength;
         varying vec2 vUv;
         varying float vElevation;
+        varying vec3 vWorldPos;
+        varying vec3 vNormal;
         void main() {
           vUv = uv;
           vec3 pos = position;
@@ -153,8 +180,14 @@ export class EnvironmentSystem extends createSystem({}) {
           float wave1 = sin(pos.x * 0.15 + uTime * 0.8) * 0.3;
           float wave2 = sin(pos.z * 0.12 + uTime * 0.6) * 0.25;
           float wave3 = sin((pos.x + pos.z) * 0.08 + uTime * 1.1) * 0.15;
-          pos.y += wave1 + wave2 + wave3 + windWave;
-          vElevation = wave1 + wave2 + wave3 + windWave;
+          float wave4 = sin(pos.x * 0.4 + pos.z * 0.3 + uTime * 1.4) * 0.08;
+          pos.y += wave1 + wave2 + wave3 + wave4 + windWave;
+          vElevation = wave1 + wave2 + wave3 + wave4 + windWave;
+          // Compute approximate normal from wave derivatives
+          float dx = 0.15*cos(pos.x*0.15+uTime*0.8)*0.3 + 0.08*cos((pos.x+pos.z)*0.08+uTime*1.1)*0.15 + 0.4*cos(pos.x*0.4+pos.z*0.3+uTime*1.4)*0.08;
+          float dz = 0.12*cos(pos.z*0.12+uTime*0.6)*0.25 + 0.08*cos((pos.x+pos.z)*0.08+uTime*1.1)*0.15 + 0.3*cos(pos.x*0.4+pos.z*0.3+uTime*1.4)*0.08;
+          vNormal = normalize(vec3(-dx, 1.0, -dz));
+          vWorldPos = (modelMatrix * vec4(pos, 1.0)).xyz;
           gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
         }
       `,
@@ -164,8 +197,12 @@ export class EnvironmentSystem extends createSystem({}) {
         uniform vec3 uFoamColor;
         uniform float uTime;
         uniform float uCausticIntensity;
+        uniform vec3 uMoonDir;
+        uniform float uSpecularStrength;
         varying vec2 vUv;
         varying float vElevation;
+        varying vec3 vWorldPos;
+        varying vec3 vNormal;
         void main() {
           float depth = smoothstep(-0.4, 0.5, vElevation);
           vec3 col = mix(uDeepColor, uShallowColor, depth);
@@ -177,6 +214,14 @@ export class EnvironmentSystem extends createSystem({}) {
           float c2 = sin(cuv.x * 5.0 - uTime * 0.4) * sin(cuv.y * 4.0 + uTime * 0.6);
           float caustic = pow(max((c1 + c2) * 0.5 + 0.5, 0.0), 3.0) * uCausticIntensity;
           col += vec3(0.1, 0.3, 0.25) * caustic;
+          // Specular highlights from moonlight
+          vec3 viewDir = normalize(cameraPosition - vWorldPos);
+          vec3 halfDir = normalize(uMoonDir + viewDir);
+          float spec = pow(max(dot(vNormal, halfDir), 0.0), 64.0) * uSpecularStrength;
+          col += vec3(0.7, 0.8, 1.0) * spec;
+          // Fresnel rim glow
+          float fresnel = pow(1.0 - max(dot(vNormal, viewDir), 0.0), 3.0) * 0.08;
+          col += vec3(0.3, 0.5, 0.6) * fresnel;
           gl_FragColor = vec4(col, 0.92);
         }
       `,
@@ -300,6 +345,13 @@ export class EnvironmentSystem extends createSystem({}) {
 
   private buildRocks() {
     const rockMat = new MeshStandardMaterial({ color: 0x2a2a2a, roughness: 1.0 });
+    const darkRockMat = new MeshStandardMaterial({ color: 0x1a1a22, roughness: 0.95 });
+    const mossyMat = new MeshStandardMaterial({
+      color: 0x1a3322,
+      roughness: 0.9,
+      emissive: 0x0a1a10,
+      emissiveIntensity: 0.3,
+    });
     const foamMat = new MeshBasicMaterial({
       color: 0x88cccc,
       transparent: true,
@@ -322,18 +374,20 @@ export class EnvironmentSystem extends createSystem({}) {
       new Vector3(5, -0.3, -50),
     ];
 
-    for (const pos of rockPositions) {
+    for (let ri = 0; ri < rockPositions.length; ri++) {
+      const pos = rockPositions[ri];
       const rockGroup = new Group();
       const mainSize = 1 + Math.random() * 1.5;
       const mainGeo = new SphereGeometry(mainSize, 6, 5);
-      const mainRock = new Mesh(mainGeo, rockMat);
+      const useDark = ri % 3 === 0;
+      const mainRock = new Mesh(mainGeo, useDark ? darkRockMat : rockMat);
       mainRock.scale.set(1, 0.5 + Math.random() * 0.3, 1);
       rockGroup.add(mainRock);
 
       for (let j = 0; j < 2; j++) {
         const smallSize = 0.5 + Math.random() * 0.8;
         const smallGeo = new SphereGeometry(smallSize, 5, 4);
-        const smallRock = new Mesh(smallGeo, rockMat);
+        const smallRock = new Mesh(smallGeo, j % 2 === 0 ? rockMat : darkRockMat);
         smallRock.position.set(
           (Math.random() - 0.5) * 2,
           0,
@@ -342,6 +396,18 @@ export class EnvironmentSystem extends createSystem({}) {
         smallRock.scale.set(1, 0.4 + Math.random() * 0.3, 1);
         rockGroup.add(smallRock);
       }
+
+      // Mossy/seaweed accent at waterline
+      const mossGeo = new SphereGeometry(mainSize * 0.7, 6, 4);
+      const mossMesh = new Mesh(mossGeo, mossyMat);
+      mossMesh.position.set(
+        (Math.random() - 0.5) * 0.5,
+        -mainSize * 0.2,
+        (Math.random() - 0.5) * 0.5,
+      );
+      mossMesh.scale.set(1.3, 0.25, 1.3);
+      rockGroup.add(mossMesh);
+      this.rockMossGlows.push(mossMesh);
 
       const foamGeo = new RingGeometry(mainSize + 0.5, mainSize + 2.0, 16);
       foamGeo.rotateX(-Math.PI / 2);
@@ -655,6 +721,58 @@ export class EnvironmentSystem extends createSystem({}) {
     entity.object3D!.position.set(0, 0.3, 0);
   }
 
+  private buildShootingStar() {
+    // Bright head
+    const headGeo = new SphereGeometry(0.5, 8, 8);
+    const headMat = new MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0,
+      blending: AdditiveBlending,
+      depthWrite: false,
+    });
+    this.shootingStarMesh = new Mesh(headGeo, headMat);
+    this.world.createTransformEntity(this.shootingStarMesh);
+
+    // Trail
+    const trailGeo = new CylinderGeometry(0.05, 0.3, 6, 4);
+    trailGeo.translate(0, 3, 0);
+    const trailMat = new MeshBasicMaterial({
+      color: 0xaaccff,
+      transparent: true,
+      opacity: 0,
+      blending: AdditiveBlending,
+      depthWrite: false,
+    });
+    this.shootingStarTrail = new Mesh(trailGeo, trailMat);
+    this.world.createTransformEntity(this.shootingStarTrail);
+  }
+
+  private buildBeamDust() {
+    this.beamDustPositions = new Float32Array(BEAM_DUST_COUNT * 3);
+    this.beamDustVelocities = new Float32Array(BEAM_DUST_COUNT * 3);
+    for (let i = 0; i < BEAM_DUST_COUNT; i++) {
+      this.beamDustPositions[i * 3] = 0;
+      this.beamDustPositions[i * 3 + 1] = -100; // hidden below
+      this.beamDustPositions[i * 3 + 2] = 0;
+      this.beamDustVelocities[i * 3] = (Math.random() - 0.5) * 0.3;
+      this.beamDustVelocities[i * 3 + 1] = (Math.random() - 0.5) * 0.1;
+      this.beamDustVelocities[i * 3 + 2] = (Math.random() - 0.5) * 0.3;
+    }
+    const geo = new BufferGeometry();
+    geo.setAttribute('position', new BufferAttribute(this.beamDustPositions, 3));
+    const mat = new PointsMaterial({
+      color: 0xffddaa,
+      size: 0.15,
+      transparent: true,
+      opacity: 0.25,
+      blending: AdditiveBlending,
+      depthWrite: false,
+    });
+    this.beamDustPoints = new Points(geo, mat);
+    this.world.createTransformEntity(this.beamDustPoints);
+  }
+
   // --- Setters ---
 
   setFogDensity(density: number) {
@@ -742,6 +860,42 @@ export class EnvironmentSystem extends createSystem({}) {
 
   isSonarActive(): boolean {
     return this.sonarActive;
+  }
+
+  // Beam dust: update positions based on beam direction from LighthouseSystem
+  updateBeamDust(beamOrigin: Vector3, beamDir: Vector3, beamActive: boolean, delta: number) {
+    const mat = this.beamDustPoints.material as PointsMaterial;
+    if (!beamActive) {
+      mat.opacity = Math.max(0, mat.opacity - delta * 2);
+      return;
+    }
+    mat.opacity = Math.min(0.25, mat.opacity + delta);
+    for (let i = 0; i < BEAM_DUST_COUNT; i++) {
+      const idx = i * 3;
+      // Drift particles
+      this.beamDustPositions[idx] += this.beamDustVelocities[idx] * delta;
+      this.beamDustPositions[idx + 1] += this.beamDustVelocities[idx + 1] * delta;
+      this.beamDustPositions[idx + 2] += this.beamDustVelocities[idx + 2] * delta;
+
+      // Check if particle is too far from beam axis — respawn
+      const px = this.beamDustPositions[idx] - beamOrigin.x;
+      const py = this.beamDustPositions[idx + 1] - beamOrigin.y;
+      const pz = this.beamDustPositions[idx + 2] - beamOrigin.z;
+      const dot = px * beamDir.x + py * beamDir.y + pz * beamDir.z;
+
+      if (dot < 0 || dot > 50 || this.beamDustPositions[idx + 1] < -5) {
+        // Respawn along beam
+        const t = 3 + Math.random() * 45;
+        const spread = 1.5 + (t / 50) * 3;
+        this.beamDustPositions[idx] = beamOrigin.x + beamDir.x * t + (Math.random() - 0.5) * spread;
+        this.beamDustPositions[idx + 1] = beamOrigin.y + beamDir.y * t + (Math.random() - 0.5) * spread;
+        this.beamDustPositions[idx + 2] = beamOrigin.z + beamDir.z * t + (Math.random() - 0.5) * spread;
+        this.beamDustVelocities[idx] = (Math.random() - 0.5) * 0.3;
+        this.beamDustVelocities[idx + 1] = (Math.random() - 0.5) * 0.1;
+        this.beamDustVelocities[idx + 2] = (Math.random() - 0.5) * 0.3;
+      }
+    }
+    (this.beamDustPoints.geometry.getAttribute('position') as BufferAttribute).needsUpdate = true;
   }
 
   update(delta: number, time: number) {
@@ -887,11 +1041,82 @@ export class EnvironmentSystem extends createSystem({}) {
       }
     }
 
+    // Shooting star animation
+    if (!this.shootingStarActive) {
+      this.shootingStarTimer -= delta;
+      if (this.shootingStarTimer <= 0) {
+        this.startShootingStar();
+      }
+    } else {
+      this.shootingStarProgress += delta / this.shootingStarDuration;
+      if (this.shootingStarProgress >= 1) {
+        this.shootingStarActive = false;
+        (this.shootingStarMesh.material as MeshBasicMaterial).opacity = 0;
+        (this.shootingStarTrail.material as MeshBasicMaterial).opacity = 0;
+        this.shootingStarTimer = SHOOTING_STAR_INTERVAL_MIN +
+          Math.random() * (SHOOTING_STAR_INTERVAL_MAX - SHOOTING_STAR_INTERVAL_MIN);
+      } else {
+        const t = this.shootingStarProgress;
+        const fadeIn = Math.min(t * 5, 1);
+        const fadeOut = Math.max(0, 1 - (t - 0.7) / 0.3);
+        const alpha = fadeIn * fadeOut;
+        const cx = this.shootingStarStart.x + (this.shootingStarEnd.x - this.shootingStarStart.x) * t;
+        const cy = this.shootingStarStart.y + (this.shootingStarEnd.y - this.shootingStarStart.y) * t;
+        const cz = this.shootingStarStart.z + (this.shootingStarEnd.z - this.shootingStarStart.z) * t;
+        this.shootingStarMesh.position.set(cx, cy, cz);
+        (this.shootingStarMesh.material as MeshBasicMaterial).opacity = alpha * 0.9;
+
+        // Trail follows slightly behind
+        const tt = Math.max(0, t - 0.05);
+        const tx = this.shootingStarStart.x + (this.shootingStarEnd.x - this.shootingStarStart.x) * tt;
+        const ty = this.shootingStarStart.y + (this.shootingStarEnd.y - this.shootingStarStart.y) * tt;
+        const tz = this.shootingStarStart.z + (this.shootingStarEnd.z - this.shootingStarStart.z) * tt;
+        this.shootingStarTrail.position.set(tx, ty, tz);
+        this.shootingStarTrail.lookAt(cx, cy, cz);
+        this.shootingStarTrail.rotateX(Math.PI / 2);
+        (this.shootingStarTrail.material as MeshBasicMaterial).opacity = alpha * 0.5;
+      }
+    }
+
+    // Rock moss glow pulse
+    for (let m = 0; m < this.rockMossGlows.length; m++) {
+      const moss = this.rockMossGlows[m];
+      const mossMat = moss.material as MeshStandardMaterial;
+      mossMat.emissiveIntensity = 0.2 + Math.sin(time * 0.6 + m * 1.3) * 0.15;
+    }
+
+    // Specular strength from day phase (more at night when moon is visible)
+    const nightSpecular = 0.3 * (1 - Math.max(0, Math.sin(this.dayPhase * Math.PI)));
+    (this.oceanMesh.material as ShaderMaterial).uniforms.uSpecularStrength.value = nightSpecular;
+
     // Caustic intensity — brighter during day, dimmer at night in storms
     const causticTarget = 0.15 + (1 - this.windStrength * 0.5) * 0.2;
     const cMat = this.oceanMesh.material as ShaderMaterial;
     const curr = cMat.uniforms.uCausticIntensity.value as number;
     cMat.uniforms.uCausticIntensity.value = curr + (causticTarget - curr) * delta * 2;
+  }
+
+  private startShootingStar() {
+    this.shootingStarActive = true;
+    this.shootingStarProgress = 0;
+    this.shootingStarDuration = 0.6 + Math.random() * 0.8;
+    // Start from a random high point in the sky dome
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.random() * Math.PI * 0.25 + 0.1;
+    const r = 130;
+    this.shootingStarStart.set(
+      r * Math.sin(phi) * Math.cos(theta),
+      r * Math.cos(phi),
+      r * Math.sin(phi) * Math.sin(theta),
+    );
+    // End: lower in the sky, offset in a direction
+    const endTheta = theta + (Math.random() - 0.5) * 0.8;
+    const endPhi = phi + 0.2 + Math.random() * 0.15;
+    this.shootingStarEnd.set(
+      r * Math.sin(endPhi) * Math.cos(endTheta),
+      r * Math.cos(endPhi),
+      r * Math.sin(endPhi) * Math.sin(endTheta),
+    );
   }
 
   private updateDayNight(time: number) {

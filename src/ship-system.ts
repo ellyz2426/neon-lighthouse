@@ -95,6 +95,15 @@ export class ShipSystem extends createSystem({}) {
   // Splash particle pool
   private splashPool: { entity: ReturnType<typeof createSystem.prototype.world.createTransformEntity>; points: Points; life: number; posArr: Float32Array; velArr: Float32Array }[] = [];
 
+  // Dock celebration particles
+  private dockCelebrationPool: {
+    entity: ReturnType<typeof createSystem.prototype.world.createTransformEntity>;
+    points: Points;
+    life: number;
+    posArr: Float32Array;
+    velArr: Float32Array;
+  }[] = [];
+
   // Distress flare pool
   private flarePool: FlareData[] = [];
 
@@ -368,6 +377,11 @@ export class ShipSystem extends createSystem({}) {
       flare.entity.dispose();
     }
     this.flarePool = [];
+
+    for (const celeb of this.dockCelebrationPool) {
+      celeb.entity.dispose();
+    }
+    this.dockCelebrationPool = [];
   }
 
   private spawnSplash(position: Vector3) {
@@ -395,6 +409,36 @@ export class ShipSystem extends createSystem({}) {
     const points = new Points(geo, mat);
     const entity = this.world.createTransformEntity(points);
     this.splashPool.push({ entity, points, life: 1.0, posArr, velArr });
+  }
+
+  private spawnDockCelebration(position: Vector3) {
+    const count = 30;
+    const posArr = new Float32Array(count * 3);
+    const velArr = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      posArr[i * 3] = position.x + (Math.random() - 0.5) * 0.5;
+      posArr[i * 3 + 1] = position.y + 0.5;
+      posArr[i * 3 + 2] = position.z + (Math.random() - 0.5) * 0.5;
+      const angle = Math.random() * Math.PI * 2;
+      const upSpeed = 3 + Math.random() * 4;
+      const outSpeed = 1 + Math.random() * 2;
+      velArr[i * 3] = Math.cos(angle) * outSpeed;
+      velArr[i * 3 + 1] = upSpeed;
+      velArr[i * 3 + 2] = Math.sin(angle) * outSpeed;
+    }
+    const geo = new BufferGeometry();
+    geo.setAttribute('position', new BufferAttribute(posArr, 3));
+    const mat = new PointsMaterial({
+      color: 0xffcc44,
+      size: 0.35,
+      transparent: true,
+      opacity: 0.9,
+      blending: AdditiveBlending,
+      depthWrite: false,
+    });
+    const points = new Points(geo, mat);
+    const entity = this.world.createTransformEntity(points);
+    this.dockCelebrationPool.push({ entity, points, life: 1.5, posArr, velArr });
   }
 
   private spawnDistressFlare(position: Vector3) {
@@ -508,6 +552,27 @@ export class ShipSystem extends createSystem({}) {
         ship.heading += (Math.sin(time + i * 3.7) * 0.2) * delta;
       }
 
+      // Ship-to-ship collision avoidance
+      for (let j = 0; j < this.ships.length; j++) {
+        if (j === i) continue;
+        const other = this.ships[j];
+        if (other.docked || other.sinking) continue;
+        const otherPos = other.entity.object3D!.position;
+        const dx = pos.x - otherPos.x;
+        const dz = pos.z - otherPos.z;
+        const distSq = dx * dx + dz * dz;
+        const avoidRadius = 5;
+        if (distSq < avoidRadius * avoidRadius && distSq > 0.01) {
+          const dist = Math.sqrt(distSq);
+          const avoidAngle = Math.atan2(dx, dz);
+          const avoidStrength = (1 - dist / avoidRadius) * 1.5;
+          let avoidDiff = avoidAngle - ship.heading;
+          while (avoidDiff > Math.PI) avoidDiff -= Math.PI * 2;
+          while (avoidDiff < -Math.PI) avoidDiff += Math.PI * 2;
+          ship.heading += avoidDiff * avoidStrength * delta;
+        }
+      }
+
       // Wind drift
       ship.heading += windStrength * 0.05 * delta;
 
@@ -609,6 +674,7 @@ export class ShipSystem extends createSystem({}) {
       if (distToHarbor < DOCK_RADIUS) {
         ship.docked = true;
         this.spawnSplash(pos.clone());
+        this.spawnDockCelebration(pos.clone());
         this.audioSystem?.playDockChime();
         continue;
       }
@@ -668,6 +734,26 @@ export class ShipSystem extends createSystem({}) {
         flare.velArr[p * 3 + 1] -= 3.0 * delta;
       }
       (flare.points.geometry.getAttribute('position') as BufferAttribute).needsUpdate = true;
+    }
+
+    // Update dock celebration particles
+    for (let c = this.dockCelebrationPool.length - 1; c >= 0; c--) {
+      const celeb = this.dockCelebrationPool[c];
+      celeb.life -= delta;
+      if (celeb.life <= 0) {
+        celeb.entity.dispose();
+        this.dockCelebrationPool.splice(c, 1);
+        continue;
+      }
+      const cMat = celeb.points.material as PointsMaterial;
+      cMat.opacity = Math.min(celeb.life, 1.0) * 0.9;
+      for (let p = 0; p < 30; p++) {
+        celeb.posArr[p * 3] += celeb.velArr[p * 3] * delta;
+        celeb.posArr[p * 3 + 1] += celeb.velArr[p * 3 + 1] * delta;
+        celeb.posArr[p * 3 + 2] += celeb.velArr[p * 3 + 2] * delta;
+        celeb.velArr[p * 3 + 1] -= 4.0 * delta; // gravity
+      }
+      (celeb.points.geometry.getAttribute('position') as BufferAttribute).needsUpdate = true;
     }
   }
 }
