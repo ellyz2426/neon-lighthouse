@@ -136,6 +136,17 @@ export class EnvironmentSystem extends createSystem({}) {
   // Tidal surge
   private tidalSurgeTimer = 0;
 
+  // Whale sighting
+  private whaleMesh!: Mesh;
+  private whaleTailMesh!: Mesh;
+  private whaleGroup!: Group;
+  private whaleActive = false;
+  private whaleTimer = 25;
+  private whaleProgress = 0;
+  private whaleDuration = 0;
+  private whaleAngle = 0;
+  private whaleDistance = 0;
+
   init() {
     this.buildOcean();
     this.buildLighthouse();
@@ -153,6 +164,7 @@ export class EnvironmentSystem extends createSystem({}) {
     this.buildSonarRing();
     this.buildShootingStar();
     this.buildBeamDust();
+    this.buildWhale();
   }
 
   private buildOcean() {
@@ -776,6 +788,78 @@ export class EnvironmentSystem extends createSystem({}) {
     this.world.createTransformEntity(this.beamDustPoints);
   }
 
+  private buildWhale() {
+    this.whaleGroup = new Group();
+
+    // Whale body — elongated ellipsoid
+    const bodyGeo = new SphereGeometry(1.5, 10, 8);
+    const bodyMat = new MeshStandardMaterial({
+      color: 0x1a2a3a,
+      roughness: 0.85,
+    });
+    this.whaleMesh = new Mesh(bodyGeo, bodyMat);
+    this.whaleMesh.scale.set(1.0, 0.5, 2.5);
+    this.whaleGroup.add(this.whaleMesh);
+
+    // Whale tail flukes — two flattened cones
+    const tailGroup = new Group();
+    const flukeMat = new MeshStandardMaterial({ color: 0x1a2a3a, roughness: 0.8 });
+    const flukeGeo = new ConeGeometry(0.8, 2.0, 4);
+    const leftFluke = new Mesh(flukeGeo, flukeMat);
+    leftFluke.rotation.z = Math.PI / 2;
+    leftFluke.rotation.y = 0.3;
+    leftFluke.scale.set(0.15, 1, 0.7);
+    leftFluke.position.set(-0.5, 0, 0);
+    tailGroup.add(leftFluke);
+
+    const rightFluke = new Mesh(flukeGeo.clone(), flukeMat);
+    rightFluke.rotation.z = -Math.PI / 2;
+    rightFluke.rotation.y = -0.3;
+    rightFluke.scale.set(0.15, 1, 0.7);
+    rightFluke.position.set(0.5, 0, 0);
+    tailGroup.add(rightFluke);
+
+    tailGroup.position.set(0, 0.5, -4.0);
+    this.whaleTailMesh = tailGroup as unknown as Mesh;
+    this.whaleGroup.add(tailGroup);
+
+    // Belly highlight
+    const bellyGeo = new SphereGeometry(1.3, 8, 6);
+    const bellyMat = new MeshStandardMaterial({
+      color: 0x3a4a5a,
+      roughness: 0.9,
+    });
+    const belly = new Mesh(bellyGeo, bellyMat);
+    belly.scale.set(0.8, 0.3, 2.0);
+    belly.position.set(0, -0.4, 0.2);
+    this.whaleGroup.add(belly);
+
+    // Water spray — small point cloud above the whale
+    const sprayCount = 20;
+    const sprayPositions = new Float32Array(sprayCount * 3);
+    for (let i = 0; i < sprayCount; i++) {
+      sprayPositions[i * 3] = (Math.random() - 0.5) * 0.8;
+      sprayPositions[i * 3 + 1] = 1.0 + Math.random() * 2;
+      sprayPositions[i * 3 + 2] = (Math.random() - 0.5) * 0.5 + 1;
+    }
+    const sprayGeo = new BufferGeometry();
+    sprayGeo.setAttribute('position', new BufferAttribute(sprayPositions, 3));
+    const sprayMat = new PointsMaterial({
+      color: 0xaaddee,
+      size: 0.25,
+      transparent: true,
+      opacity: 0.4,
+      blending: AdditiveBlending,
+      depthWrite: false,
+    });
+    const spray = new Points(sprayGeo, sprayMat);
+    this.whaleGroup.add(spray);
+
+    this.whaleGroup.visible = false;
+    const entity = this.world.createTransformEntity(this.whaleGroup);
+    entity.object3D!.position.set(0, -10, 0);
+  }
+
   // --- Setters ---
 
   setFogDensity(density: number) {
@@ -1103,6 +1187,9 @@ export class EnvironmentSystem extends createSystem({}) {
     const nightSpecular = 0.3 * (1 - Math.max(0, Math.sin(this.dayPhase * Math.PI)));
     (this.oceanMesh.material as ShaderMaterial).uniforms.uSpecularStrength.value = nightSpecular;
 
+    // Whale sighting events
+    this.updateWhale(delta, time);
+
     // Caustic intensity — brighter during day, dimmer at night in storms
     const causticTarget = 0.15 + (1 - this.windStrength * 0.5) * 0.2;
     const cMat = this.oceanMesh.material as ShaderMaterial;
@@ -1155,5 +1242,80 @@ export class EnvironmentSystem extends createSystem({}) {
       const moonMat = this.moonMesh.material as MeshBasicMaterial;
       moonMat.opacity = 0.9 * (1 - dayBrightness * 0.8);
     }
+  }
+
+  // Whale sighting: check if active
+  isWhaleActive(): boolean {
+    return this.whaleActive;
+  }
+
+  private updateWhale(delta: number, time: number) {
+    if (!this.whaleActive) {
+      this.whaleTimer -= delta;
+      if (this.whaleTimer <= 0) {
+        this.startWhaleSighting();
+      }
+      return;
+    }
+
+    this.whaleProgress += delta / this.whaleDuration;
+    if (this.whaleProgress >= 1.0) {
+      this.whaleActive = false;
+      this.whaleGroup.visible = false;
+      this.whaleTimer = 30 + Math.random() * 40;
+      return;
+    }
+
+    const t = this.whaleProgress;
+    const dist = this.whaleDistance;
+    const angle = this.whaleAngle;
+
+    // Whale breaches in an arc: rises from water, arcs over, dives back
+    const x = Math.cos(angle) * dist;
+    const z = Math.sin(angle) * dist;
+    // Arc path: parabolic breach
+    const arcHeight = 3.5;
+    const y = -1.5 + arcHeight * Math.sin(t * Math.PI);
+    // Forward motion along arc
+    const forwardOffset = (t - 0.5) * 12;
+    const fx = x + Math.cos(angle + Math.PI / 2) * forwardOffset;
+    const fz = z + Math.sin(angle + Math.PI / 2) * forwardOffset;
+
+    this.whaleGroup.position.set(fx, y, fz);
+
+    // Rotation: whale faces forward along its path, tilting with the arc
+    this.whaleGroup.rotation.y = angle + Math.PI / 2;
+    // Pitch the whale along the arc
+    const pitchAngle = Math.cos(t * Math.PI) * 0.6;
+    this.whaleGroup.rotation.x = pitchAngle;
+
+    // Tail flap animation
+    if (this.whaleTailMesh) {
+      this.whaleTailMesh.rotation.x = Math.sin(time * 3) * 0.4;
+    }
+
+    // Visibility: fade in and out
+    const fadeIn = Math.min(t * 5, 1);
+    const fadeOut = Math.max(0, 1 - (t - 0.8) / 0.2);
+    this.whaleGroup.visible = fadeIn > 0 && fadeOut > 0;
+
+    // Scale the spray visibility with the breach height
+    const sprayChildren = this.whaleGroup.children;
+    if (sprayChildren.length > 2) {
+      const spray = sprayChildren[sprayChildren.length - 1];
+      if (spray instanceof Points) {
+        const sMat = spray.material as PointsMaterial;
+        sMat.opacity = y > 0 ? 0.4 * fadeIn * fadeOut : 0;
+      }
+    }
+  }
+
+  private startWhaleSighting() {
+    this.whaleActive = true;
+    this.whaleProgress = 0;
+    this.whaleDuration = 4.0 + Math.random() * 2;
+    this.whaleAngle = Math.random() * Math.PI * 2;
+    this.whaleDistance = 35 + Math.random() * 15;
+    this.whaleGroup.visible = true;
   }
 }

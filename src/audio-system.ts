@@ -539,6 +539,37 @@ export class AudioSystem extends createSystem({}) {
   }
 
   // New: sonar ping for fog mechanic
+  // Combo chime — rising pitch with combo count
+  playComboChime(comboCount: number) {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    const baseNote = 523 + Math.min(comboCount - 2, 8) * 60; // C5 rising
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(baseNote, now);
+    osc.frequency.linearRampToValueAtTime(baseNote * 1.5, now + 0.15);
+    gain.gain.setValueAtTime(0.12, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.3);
+
+    // Second harmonic for richness
+    const osc2 = this.ctx.createOscillator();
+    const gain2 = this.ctx.createGain();
+    osc2.type = 'triangle';
+    osc2.frequency.value = baseNote * 1.5;
+    gain2.gain.setValueAtTime(0.06, now + 0.05);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+    osc2.connect(gain2);
+    gain2.connect(this.masterGain);
+    osc2.start(now + 0.05);
+    osc2.stop(now + 0.25);
+  }
+
+  // New: sonar ping for fog mechanic
   playSonarPing() {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
@@ -575,5 +606,49 @@ export class AudioSystem extends createSystem({}) {
 
     // Update drone tonality
     this.updateDrone();
+  }
+
+  // Whale song — eerie deep call
+  playWhaleCall() {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(80, now);
+    osc.frequency.linearRampToValueAtTime(120, now + 0.8);
+    osc.frequency.linearRampToValueAtTime(70, now + 2.0);
+    osc.frequency.linearRampToValueAtTime(100, now + 3.0);
+    osc.frequency.linearRampToValueAtTime(60, now + 4.5);
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.06, now + 0.3);
+    gain.gain.setValueAtTime(0.06, now + 1.5);
+    gain.gain.linearRampToValueAtTime(0.08, now + 2.5);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 5.0);
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 250;
+    filter.Q.value = 3;
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 5.0);
+
+    // Overtone for eerie quality
+    const osc2 = this.ctx.createOscillator();
+    const gain2 = this.ctx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(160, now + 0.5);
+    osc2.frequency.linearRampToValueAtTime(200, now + 1.5);
+    osc2.frequency.linearRampToValueAtTime(140, now + 3.5);
+    gain2.gain.setValueAtTime(0, now + 0.5);
+    gain2.gain.linearRampToValueAtTime(0.02, now + 1.0);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 4.0);
+    osc2.connect(filter);
+    filter.connect(gain2);
+    gain2.connect(this.masterGain);
+    osc2.start(now + 0.5);
+    osc2.stop(now + 4.0);
   }
 }

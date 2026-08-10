@@ -120,6 +120,10 @@ export class ShipSystem extends createSystem({}) {
   public baseSpeed = 0.8;
   public waveShipCount = 0;
 
+  // Event callbacks
+  public onShipDocked: ((shipType: number, points: number) => void) | null = null;
+  public onShipCrashed: ((shipType: number) => void) | null = null;
+
   // Splash particle pool
   private splashPool: { entity: ReturnType<typeof createSystem.prototype.world.createTransformEntity>; points: Points; life: number; posArr: Float32Array; velArr: Float32Array }[] = [];
 
@@ -724,6 +728,7 @@ export class ShipSystem extends createSystem({}) {
         this.spawnSplash(pos.clone());
         this.spawnDockCelebration(pos.clone());
         this.audioSystem?.playDockChime();
+        this.onShipDocked?.(ship.shipType, ship.points);
         continue;
       }
 
@@ -734,6 +739,7 @@ export class ShipSystem extends createSystem({}) {
           ship.sinking = true;
           this.spawnSplash(pos.clone());
           this.audioSystem?.playCrashSound();
+          this.onShipCrashed?.(ship.shipType);
           break;
         }
       }

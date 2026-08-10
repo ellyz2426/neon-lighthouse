@@ -102,6 +102,11 @@
     color: #44ffaa;
     font-weight: bold;
   }
+  .combo-display {
+    font-size: 11;
+    color: #ff9944;
+    font-weight: bold;
+  }
 </style>
 <Panel class="root">
   <div class="top-row">
@@ -146,6 +151,7 @@
       </div>
     </div>
     <div class="special-info" id="special-info"></div>
+    <div class="combo-display" id="combo-display"></div>
     <div class="sonar-status" id="sonar-status">SONAR: [F]</div>
     <div class="wave-info" id="wave-start-info"></div>
   </div>

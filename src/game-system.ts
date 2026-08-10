@@ -61,6 +61,12 @@ export class GameSystem extends createSystem({}) {
   private waveStartTimer = 0;
   private showingWaveStart = false;
 
+  // Combo system
+  private combo = 0;
+  private comboMultiplier = 1.0;
+  private comboDecayTimer = 0;
+  private maxCombo = 0;
+
   // Special event timers
   private emergencyTimer = 0;
   private treasureTimer = 0;
@@ -113,6 +119,7 @@ export class GameSystem extends createSystem({}) {
 
     this.setupPanelButtons();
     this.setupSonarInput();
+    this.setupShipCallbacks();
     this.showState('menu');
   }
 
@@ -193,6 +200,44 @@ export class GameSystem extends createSystem({}) {
         this.activateSonar();
       }
     });
+  }
+
+  private setupShipCallbacks() {
+    this.shipSystem.onShipDocked = (_shipType: number, points: number) => {
+      if (this.state !== 'playing') return;
+      // Increment combo
+      this.combo++;
+      this.comboDecayTimer = 8.0; // 8 second window to maintain combo
+      this.comboMultiplier = 1.0 + Math.min(this.combo - 1, 9) * 0.25; // Max 3.5x at 10 combo
+      const comboPoints = Math.floor(points * this.comboMultiplier);
+      this.score += comboPoints;
+      if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+
+      // Show combo notification
+      if (this.combo >= 2) {
+        this.audioSystem.playComboChime(this.combo);
+        this.hudPanel?.getElementById('wave-start-info')?.setProperties({
+          text: `COMBO x${this.combo} — ${this.comboMultiplier.toFixed(1)}x multiplier! +${comboPoints}`,
+        });
+        this.showingWaveStart = true;
+        this.waveStartTimer = 2.0;
+      }
+    };
+
+    this.shipSystem.onShipCrashed = () => {
+      if (this.state !== 'playing') return;
+      // Break combo
+      if (this.combo >= 2) {
+        this.hudPanel?.getElementById('wave-start-info')?.setProperties({
+          text: `COMBO BROKEN — x${this.combo} streak lost!`,
+        });
+        this.showingWaveStart = true;
+        this.waveStartTimer = 2.0;
+      }
+      this.combo = 0;
+      this.comboMultiplier = 1.0;
+      this.comboDecayTimer = 0;
+    };
   }
 
   private activateSonar() {
@@ -302,6 +347,9 @@ export class GameSystem extends createSystem({}) {
     this.treasureSpawned = false;
     this.sonarReady = true;
     this.sonarCooldown = 0;
+    this.combo = 0;
+    this.comboMultiplier = 1.0;
+    this.comboDecayTimer = 0;
     this.shipSystem.clearAllShips();
 
     const config = this.getWaveConfig(this.wave);
@@ -450,6 +498,15 @@ export class GameSystem extends createSystem({}) {
     } else {
       this.hudPanel?.getElementById('sonar-status')?.setProperties({ text: 'SONAR: [F]' });
     }
+
+    // Combo display
+    if (this.combo >= 2) {
+      this.hudPanel?.getElementById('combo-display')?.setProperties({
+        text: `x${this.combo} (${this.comboMultiplier.toFixed(1)}x)`,
+      });
+    } else {
+      this.hudPanel?.getElementById('combo-display')?.setProperties({ text: '' });
+    }
   }
 
   private updateCompass() {
@@ -527,8 +584,8 @@ export class GameSystem extends createSystem({}) {
     this.waveShipsLost = this.waveShipTotal - docked;
 
     const perfectBonus = this.waveShipsLost === 0 ? 500 : 0;
-    const waveScore = dockedPoints + perfectBonus;
-    this.score += waveScore;
+    // Docking points are now added per-ship via combo callback
+    this.score += perfectBonus;
     this.totalShipsSaved += docked;
 
     this.lives -= this.waveShipsLost;
@@ -559,6 +616,9 @@ export class GameSystem extends createSystem({}) {
     this.waveCompletePanel?.getElementById('ships-lost')?.setProperties({ text: String(this.waveShipsLost) });
     this.waveCompletePanel?.getElementById('bonus')?.setProperties({ text: `+${perfectBonus}` });
     this.waveCompletePanel?.getElementById('stars')?.setProperties({ text: starStr });
+    this.waveCompletePanel?.getElementById('max-combo')?.setProperties({
+      text: this.maxCombo >= 2 ? `Best Combo: x${this.maxCombo}` : '',
+    });
 
     // Keeper's log entry
     const logEntry = KEEPER_LOG[(this.wave - 1) % KEEPER_LOG.length];
@@ -615,6 +675,15 @@ export class GameSystem extends createSystem({}) {
         if (this.waveStartTimer <= 0) {
           this.showingWaveStart = false;
           this.hudPanel?.getElementById('wave-start-info')?.setProperties({ text: '' });
+        }
+      }
+
+      // Combo decay timer
+      if (this.combo > 0 && this.comboDecayTimer > 0) {
+        this.comboDecayTimer -= delta;
+        if (this.comboDecayTimer <= 0) {
+          this.combo = 0;
+          this.comboMultiplier = 1.0;
         }
       }
 

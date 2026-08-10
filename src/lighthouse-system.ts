@@ -35,6 +35,11 @@ export class LighthouseSystem extends createSystem({}) {
   // Environment system ref for beam dust
   private envSystem!: EnvironmentSystem;
 
+  // Pre-allocated vectors for per-frame use (avoid allocations in update)
+  private _xrWorldPos = new Vector3();
+  private _xrWorldDir = new Vector3(0, 0, -1);
+  private _aimTargetCalc = new Vector3();
+
   // Beam energy system
   private beamEnergy = 100;
   private maxEnergy = 100;
@@ -47,6 +52,10 @@ export class LighthouseSystem extends createSystem({}) {
   private beamRangeMultiplier = 1.0;
   private beamWidthMultiplier = 1.0;
   private beamIntensityMultiplier = 1.0;
+
+  // Pre-allocated vectors for beam visual updates
+  private _beamTarget = new Vector3();
+  private _spotTargetDir = new Vector3();
 
   // Beam tip glow
   private beamTipGlow!: PointLight;
@@ -225,13 +234,12 @@ export class LighthouseSystem extends createSystem({}) {
     // Use ray space for beam direction
     const raySpace = this.world.player.raySpaces.right;
     if (raySpace) {
-      const worldPos = new Vector3();
-      const worldDir = new Vector3(0, 0, -1);
-      raySpace.getWorldPosition(worldPos);
-      raySpace.getWorldDirection(worldDir);
+      raySpace.getWorldPosition(this._xrWorldPos);
+      this._xrWorldDir.set(0, 0, -1);
+      raySpace.getWorldDirection(this._xrWorldDir);
 
       // Aim beam in ray direction projected from lighthouse top
-      this.beamDirection.copy(worldDir).normalize();
+      this.beamDirection.copy(this._xrWorldDir).normalize();
     }
   }
 
@@ -277,10 +285,10 @@ export class LighthouseSystem extends createSystem({}) {
       this.spotLight.intensity = (3 + Math.sin(time * 3) * 1) * this.beamIntensityMultiplier * energyFrac;
 
       // Orient beam group to point in beam direction
-      const target = BEAM_ORIGIN.clone().add(
-        this.beamDirection.clone().multiplyScalar(BEAM_LENGTH * this.beamRangeMultiplier),
+      this._beamTarget.copy(BEAM_ORIGIN).addScaledVector(
+        this.beamDirection, BEAM_LENGTH * this.beamRangeMultiplier,
       );
-      this.beamGroup.lookAt(target);
+      this.beamGroup.lookAt(this._beamTarget);
       this.beamGroup.rotateX(Math.PI / 2); // Cone points along -Y, need to fix
 
       // Move spotlight target
